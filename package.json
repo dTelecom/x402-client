@@ -1,0 +1,54 @@
+{
+  "name": "@dtelecom/x402-client",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for dTelecom x402 gateway — buy credits and create WebRTC/STT/TTS sessions",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "x402",
+    "webrtc",
+    "stt",
+    "tts",
+    "micropayments",
+    "dtelecom"
+  ],
+  "author": "dTelecom <dev@dtelecom.org>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dTelecom/x402-client.git"
+  },
+  "homepage": "https://github.com/dTelecom/x402-client#readme",
+  "dependencies": {
+    "@x402/evm": "^2.5.0",
+    "@x402/fetch": "^2.5.0",
+    "viem": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
