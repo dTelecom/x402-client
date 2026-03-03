@@ -391,9 +391,16 @@ describe("DtelecomGateway", () => {
         jsonResponse({
           bundle_id: "bundle-1",
           webrtc: {
-            session_id: "w-1",
-            token: "w-token",
-            ws_url: "wss://sfu.example.com",
+            agent: {
+              session_id: "wa-1",
+              token: "wa-token",
+              ws_url: "wss://sfu.example.com",
+            },
+            client: {
+              session_id: "wc-1",
+              token: "wc-token",
+              ws_url: "wss://sfu.example.com",
+            },
           },
           stt: {
             session_id: "s-1",
@@ -415,11 +422,14 @@ describe("DtelecomGateway", () => {
         durationMinutes: 30,
         language: "en",
         ttsMaxCharacters: 50000,
+        clientIdentity: "client-1",
       });
 
       expect(result.bundleId).toBe("bundle-1");
-      expect(result.webrtc.sessionId).toBe("w-1");
-      expect(result.webrtc.wsUrl).toBe("wss://sfu.example.com");
+      expect(result.webrtc.agent.sessionId).toBe("wa-1");
+      expect(result.webrtc.agent.wsUrl).toBe("wss://sfu.example.com");
+      expect(result.webrtc.client.sessionId).toBe("wc-1");
+      expect(result.webrtc.client.token).toBe("wc-token");
       expect(result.stt.serverUrl).toBe("https://stt.example.com");
       expect(result.tts.serverUrl).toBe("https://tts.example.com");
 
@@ -430,6 +440,7 @@ describe("DtelecomGateway", () => {
       expect(body.participant_identity).toBe("agent-1");
       expect(body.duration_minutes).toBe(30);
       expect(body.tts_max_characters).toBe(50000);
+      expect(body.client_identity).toBe("client-1");
     });
   });
 
@@ -437,7 +448,10 @@ describe("DtelecomGateway", () => {
     it("sends bundle_id and additional params", async () => {
       mockFetch.mockResolvedValueOnce(
         jsonResponse({
-          webrtc: { token: "new-w", new_expires_at: "2025-01-01T02:00:00Z" },
+          webrtc: {
+            agent: { token: "new-wa", new_expires_at: "2025-01-01T02:00:00Z" },
+            client: { token: "new-wc", new_expires_at: "2025-01-01T02:00:00Z" },
+          },
           stt: { token: "new-s", new_expires_at: "2025-01-01T02:00:00Z" },
           tts: { token: "new-t", new_expires_at: "2025-01-01T02:00:00Z" },
         }),
@@ -449,7 +463,8 @@ describe("DtelecomGateway", () => {
         additionalTtsCharacters: 10000,
       });
 
-      expect(result.webrtc?.token).toBe("new-w");
+      expect(result.webrtc?.agent?.token).toBe("new-wa");
+      expect(result.webrtc?.client?.token).toBe("new-wc");
       expect(result.stt?.newExpiresAt).toBe("2025-01-01T02:00:00Z");
 
       const body = JSON.parse(
@@ -557,7 +572,10 @@ describe("DtelecomGateway", () => {
       mockFetch.mockResolvedValueOnce(
         jsonResponse({
           bundle_id: "b-1",
-          webrtc: { session_id: "w-1", token: "t", ws_url: "wss://x" },
+          webrtc: {
+            agent: { session_id: "wa-1", token: "t", ws_url: "wss://x" },
+            client: { session_id: "wc-1", token: "t", ws_url: "wss://x" },
+          },
           stt: { session_id: "s-1", token: "t", server_url: "https://x" },
           tts: { session_id: "t-1", token: "t", server_url: "https://x" },
           expires_at: "2025-01-01T00:00:00Z",
@@ -570,8 +588,9 @@ describe("DtelecomGateway", () => {
         durationMinutes: 10,
       });
 
-      expect(result.webrtc.sessionId).toBe("w-1");
-      expect(result.webrtc.wsUrl).toBe("wss://x");
+      expect(result.webrtc.agent.sessionId).toBe("wa-1");
+      expect(result.webrtc.agent.wsUrl).toBe("wss://x");
+      expect(result.webrtc.client.sessionId).toBe("wc-1");
       expect(result.stt.serverUrl).toBe("https://x");
     });
 

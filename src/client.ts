@@ -149,14 +149,22 @@ export class DtelecomGateway {
       language: options.language,
       tts_max_characters: options.ttsMaxCharacters,
       metadata: options.metadata,
+      client_identity: options.clientIdentity,
       client_ip: options.clientIp,
     });
     return {
       bundleId: r.bundle_id,
       webrtc: {
-        sessionId: r.webrtc.session_id,
-        token: r.webrtc.token,
-        wsUrl: r.webrtc.ws_url,
+        agent: {
+          sessionId: r.webrtc.agent.session_id,
+          token: r.webrtc.agent.token,
+          wsUrl: r.webrtc.agent.ws_url,
+        },
+        client: {
+          sessionId: r.webrtc.client.session_id,
+          token: r.webrtc.client.token,
+          wsUrl: r.webrtc.client.ws_url,
+        },
       },
       stt: {
         sessionId: r.stt.session_id,
@@ -182,10 +190,19 @@ export class DtelecomGateway {
     });
     const result: ExtendAgentSessionResponse = {};
     if (r.webrtc) {
-      result.webrtc = {
-        token: r.webrtc.token,
-        newExpiresAt: r.webrtc.new_expires_at,
-      };
+      result.webrtc = {};
+      if (r.webrtc.agent) {
+        result.webrtc.agent = {
+          token: r.webrtc.agent.token,
+          newExpiresAt: r.webrtc.agent.new_expires_at,
+        };
+      }
+      if (r.webrtc.client) {
+        result.webrtc.client = {
+          token: r.webrtc.client.token,
+          newExpiresAt: r.webrtc.client.new_expires_at,
+        };
+      }
     }
     if (r.stt) {
       result.stt = {

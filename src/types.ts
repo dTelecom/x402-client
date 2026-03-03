@@ -44,6 +44,7 @@ export interface CreateAgentSessionRequest {
   language?: string;
   ttsMaxCharacters?: number;
   metadata?: string;
+  clientIdentity?: string;
   clientIp?: string;
 }
 
@@ -160,14 +161,20 @@ export interface ExtendTTSSessionResponse {
 
 export interface AgentSessionResponse {
   bundleId: string;
-  webrtc: { sessionId: string; token: string; wsUrl: string };
+  webrtc: {
+    agent: { sessionId: string; token: string; wsUrl: string };
+    client: { sessionId: string; token: string; wsUrl: string };
+  };
   stt: { sessionId: string; token: string; serverUrl: string };
   tts: { sessionId: string; token: string; serverUrl: string };
   expiresAt: string;
 }
 
 export interface ExtendAgentSessionResponse {
-  webrtc?: { token: string; newExpiresAt: string };
+  webrtc?: {
+    agent?: { token: string; newExpiresAt: string };
+    client?: { token: string; newExpiresAt: string };
+  };
   stt?: { token: string; newExpiresAt: string };
   tts?: { token: string; newExpiresAt: string };
 }
