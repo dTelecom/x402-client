@@ -30,14 +30,17 @@ console.log(`Credits: ${purchase.creditedMicrocredits}`);
 // Create agent session (WebRTC + STT + TTS bundle)
 const session = await gateway.createAgentSession({
   roomName: 'tutor-room-123',
-  participantIdentity: 'student-1',
+  participantIdentity: 'ai-tutor',
+  clientIdentity: 'student-1',
+  clientIp: '203.0.113.42',       // optional — routes client to nearest SFU
   durationMinutes: 10,
   language: 'en',
 });
 
-console.log(session.webrtc.token);  // JWT for WebRTC SFU
-console.log(session.stt.token);     // Token for STT server
-console.log(session.tts.token);     // Token for TTS server
+console.log(session.webrtc.agent.token);   // JWT for agent's WebRTC connection
+console.log(session.webrtc.client.token);  // JWT for client's WebRTC connection
+console.log(session.stt.token);            // Token for STT server
+console.log(session.tts.token);            // Token for TTS server
 ```
 
 ## Wallet Support
@@ -83,8 +86,23 @@ new DtelecomGateway({ gatewayUrl: string, account: LocalAccount })
 
 | Method | Description |
 |--------|-------------|
-| `createAgentSession({ roomName, participantIdentity, durationMinutes, language?, ttsMaxCharacters?, metadata? })` | Create bundled session |
+| `createAgentSession({ roomName, participantIdentity, durationMinutes, language?, ttsMaxCharacters?, metadata?, clientIdentity?, clientIp? })` | Create bundled session |
 | `extendAgentSession({ bundleId, additionalMinutes, additionalTtsCharacters? })` | Extend all sessions in bundle |
+
+`createAgentSession` returns two WebRTC tokens — one for the agent and one for the client:
+
+```typescript
+{
+  bundleId: string;
+  webrtc: {
+    agent:  { sessionId: string; token: string; wsUrl: string };
+    client: { sessionId: string; token: string; wsUrl: string };
+  };
+  stt: { sessionId: string; token: string; serverUrl: string };
+  tts: { sessionId: string; token: string; serverUrl: string };
+  expiresAt: string;
+}
+```
 
 ### Standalone Sessions
 
