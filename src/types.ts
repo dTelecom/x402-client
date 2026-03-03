@@ -9,6 +9,7 @@ export interface CreateWebRTCTokenRequest {
   participantIdentity: string;
   durationMinutes: number;
   metadata?: string;
+  clientIp?: string;
 }
 
 export interface ExtendWebRTCTokenRequest {
@@ -43,6 +44,7 @@ export interface CreateAgentSessionRequest {
   language?: string;
   ttsMaxCharacters?: number;
   metadata?: string;
+  clientIp?: string;
 }
 
 export interface ExtendAgentSessionRequest {

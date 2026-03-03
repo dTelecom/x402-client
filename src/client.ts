@@ -149,6 +149,7 @@ export class DtelecomGateway {
       language: options.language,
       tts_max_characters: options.ttsMaxCharacters,
       metadata: options.metadata,
+      client_ip: options.clientIp,
     });
     return {
       bundleId: r.bundle_id,
@@ -211,6 +212,7 @@ export class DtelecomGateway {
       participant_identity: options.participantIdentity,
       duration_minutes: options.durationMinutes,
       metadata: options.metadata,
+      client_ip: options.clientIp,
     });
     return {
       sessionId: r.session_id,
