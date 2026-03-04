@@ -46,8 +46,8 @@ import type {
 type Raw = Record<string, any>;
 
 export interface DtelecomGatewayConfig {
-  /** Gateway base URL (e.g. "https://x402.dtelecom.org") */
-  gatewayUrl: string;
+  /** Gateway base URL (default: "https://x402.dtelecom.org") */
+  gatewayUrl?: string;
   /** viem LocalAccount — from privateKeyToAccount(), CDP toAccount(), KMS adapter, etc. */
   account: LocalAccount;
 }
@@ -58,7 +58,7 @@ export class DtelecomGateway {
   private readonly fetchWithPayment: typeof fetch;
 
   constructor(config: DtelecomGatewayConfig) {
-    this.baseUrl = config.gatewayUrl.replace(/\/+$/, "");
+    this.baseUrl = (config.gatewayUrl ?? "https://x402.dtelecom.org").replace(/\/+$/, "");
     this.account = config.account;
 
     // Set up x402 payment client for EVM (Base mainnet)
