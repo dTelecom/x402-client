@@ -1,6 +1,6 @@
 {
   "name": "@dtelecom/x402-client",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "TypeScript SDK for dTelecom x402 gateway — buy credits and create WebRTC/STT/TTS sessions",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
