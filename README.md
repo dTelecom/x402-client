@@ -2,24 +2,29 @@
 
 TypeScript SDK for the [dTelecom x402 gateway](https://x402.dtelecom.org) — buy credits with USDC and create WebRTC, STT, and TTS sessions for AI agents.
 
-Uses the [x402 HTTP payment protocol](https://www.x402.org/) for on-chain micropayments on Base.
+Uses the [x402 HTTP payment protocol](https://www.x402.org/) for on-chain micropayments on Base and Solana.
 
 ## Install
+
+**EVM (Base):**
 
 ```bash
 npm install @dtelecom/x402-client @x402/fetch @x402/evm viem
 ```
 
-`@x402/fetch` and `@x402/evm` are peer dependencies — they handle the 402 payment flow.
+**Solana:**
 
-## Quick Start
+```bash
+npm install @dtelecom/x402-client @x402/fetch @x402/svm @solana/kit
+```
+
+## Quick Start (EVM)
 
 ```typescript
 import { DtelecomGateway } from '@dtelecom/x402-client';
 import { privateKeyToAccount } from 'viem/accounts';
 
 const gateway = new DtelecomGateway({
-  gatewayUrl: 'https://x402.dtelecom.org',
   account: privateKeyToAccount(process.env.WALLET_PRIVATE_KEY as `0x${string}`),
 });
 
@@ -43,7 +48,26 @@ console.log(session.stt.token);            // Token for STT server
 console.log(session.tts.token);            // Token for TTS server
 ```
 
+## Quick Start (Solana)
+
+```typescript
+import { DtelecomGateway } from '@dtelecom/x402-client';
+import { generateKeyPairSigner } from '@solana/kit';
+
+const signer = await generateKeyPairSigner();
+// Or load from file: import { createKeyPairSignerFromBytes } from '@solana/kit';
+
+const gateway = new DtelecomGateway({
+  solanaAccount: signer,
+});
+
+// Same API as EVM — buyCredits, createAgentSession, etc.
+const purchase = await gateway.buyCredits({ amountUsd: 0.10 });
+```
+
 ## Wallet Support
+
+### EVM
 
 The SDK accepts a viem `LocalAccount` — the standard interface for server-side wallets:
 
@@ -60,19 +84,39 @@ const account = toAccount(cdpServerAccount);
 const account = await createKmsAccount({ ... });
 ```
 
+### Solana
+
+The SDK accepts any `KeyPairSigner` from `@solana/kit`:
+
+```typescript
+// Generate new keypair
+import { generateKeyPairSigner } from '@solana/kit';
+const signer = await generateKeyPairSigner();
+
+// Load from secret key bytes
+import { createKeyPairSignerFromBytes } from '@solana/kit';
+const signer = await createKeyPairSignerFromBytes(secretKeyBytes);
+```
+
 ## API
 
 ### Constructor
 
 ```typescript
-new DtelecomGateway({ gatewayUrl: string, account: LocalAccount })
+// EVM
+new DtelecomGateway({ account: LocalAccount, gatewayUrl?: string })
+
+// Solana
+new DtelecomGateway({ solanaAccount: SolanaSigner, gatewayUrl?: string })
 ```
+
+Exactly one of `account` or `solanaAccount` must be provided. `gatewayUrl` defaults to `https://x402.dtelecom.org`.
 
 ### Credits
 
 | Method | Description |
 |--------|-------------|
-| `buyCredits({ amountUsd })` | Purchase credits via x402 USDC payment on Base |
+| `buyCredits({ amountUsd })` | Purchase credits via x402 USDC payment (Base or Solana) |
 
 ### Account
 
