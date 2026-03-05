@@ -1,3 +1,12 @@
+// === Solana signer interface (structurally compatible with @solana/kit KeyPairSigner) ===
+
+export interface SolanaSigner {
+  readonly address: string;
+  signMessages(
+    messages: readonly { content: Uint8Array }[],
+  ): Promise<readonly Record<string, string>[]>;
+}
+
 // === Request types (camelCase — SDK convention) ===
 
 export interface BuyCreditsRequest {

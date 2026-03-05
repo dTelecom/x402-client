@@ -43,12 +43,30 @@ vi.mock("viem", async (importOriginal) => {
   };
 });
 
+// Mock @solana/kit for base58 encoding (string → bytes)
+vi.mock("@solana/kit", () => ({
+  getBase58Encoder: () => ({
+    encode: (input: string) => {
+      // Simple mock: return deterministic 64-byte Ed25519 signature
+      const bytes = new Uint8Array(64);
+      for (let i = 0; i < 64; i++) bytes[i] = i;
+      return bytes;
+    },
+  }),
+}));
+
+// Mock @x402/svm/exact/client
+vi.mock("@x402/svm/exact/client", () => ({
+  registerExactSvmScheme: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // Import after mocks are set up
 // ---------------------------------------------------------------------------
 
-import { DtelecomGateway } from "../src/client.js";
-import { createAuthHeaders } from "../src/auth.js";
+import { DtelecomGateway, type DtelecomGatewayConfig } from "../src/client.js";
+import { createAuthHeaders, createSolanaAuthHeaders } from "../src/auth.js";
+import type { SolanaSigner } from "../src/types.js";
 import {
   GatewayError,
   InsufficientCreditsError,
@@ -57,6 +75,18 @@ import {
   NoCapacityError,
   PaymentError,
 } from "../src/errors.js";
+
+// Mock Solana signer for testing
+const SOLANA_ADDRESS = "7EcDhSYGxXyscszYEp35KHN8vvw3svAuLKTzXwCFLtV";
+
+function createMockSolanaSigner(): SolanaSigner {
+  return {
+    address: SOLANA_ADDRESS,
+    signMessages: vi.fn().mockResolvedValue([
+      { [SOLANA_ADDRESS]: "MockBase58Signature" },
+    ]),
+  };
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -618,5 +648,131 @@ describe("DtelecomGateway", () => {
       expect(result.transactions[0].balanceAfter).toBe("5000000");
       expect(result.transactions[0].referenceId).toBe("ref-1");
     });
+  });
+});
+
+// ===========================================================================
+// Solana support tests
+// ===========================================================================
+
+describe("createSolanaAuthHeaders", () => {
+  it("produces correct header structure", async () => {
+    const signer = createMockSolanaSigner();
+    const headers = await createSolanaAuthHeaders(signer, "GET", "/v1/account");
+
+    expect(headers["X-Wallet-Address"]).toBe(SOLANA_ADDRESS);
+    expect(headers["X-Wallet-Chain"]).toBe("solana");
+    expect(headers.Authorization).toMatch(/^solana:.+$/);
+    expect(Number(headers["X-Timestamp"])).toBeGreaterThan(0);
+  });
+
+  it("signs the correct message bytes", async () => {
+    const signer = createMockSolanaSigner();
+    await createSolanaAuthHeaders(signer, "POST", "/v1/webrtc/token");
+
+    expect(signer.signMessages).toHaveBeenCalledOnce();
+    const call = (signer.signMessages as ReturnType<typeof vi.fn>).mock.calls[0];
+    const content = call[0][0].content as Uint8Array;
+    const decoded = new TextDecoder().decode(content);
+    // Message format: METHOD\nPATHNAME\nTIMESTAMP
+    expect(decoded).toMatch(/^POST\n\/v1\/webrtc\/token\n\d+$/);
+  });
+
+  it("produces base64-encoded signature", async () => {
+    const signer = createMockSolanaSigner();
+    const headers = await createSolanaAuthHeaders(signer, "GET", "/v1/account");
+
+    const sig = headers.Authorization.split(":")[1];
+    // Should be valid base64 (our mock produces deterministic 64-byte output)
+    expect(() => Buffer.from(sig, "base64")).not.toThrow();
+    expect(Buffer.from(sig, "base64").length).toBe(64);
+  });
+
+  it("strips query params from signed message", async () => {
+    const signer = createMockSolanaSigner();
+    await createSolanaAuthHeaders(
+      signer,
+      "GET",
+      "/v1/account/transactions?limit=10&offset=5",
+    );
+
+    const call = (signer.signMessages as ReturnType<typeof vi.fn>).mock.calls[0];
+    const decoded = new TextDecoder().decode(call[0][0].content as Uint8Array);
+    expect(decoded).toMatch(/^GET\n\/v1\/account\/transactions\n\d+$/);
+    expect(decoded).not.toContain("limit=10");
+  });
+});
+
+describe("DtelecomGateway (Solana)", () => {
+  let gw: DtelecomGateway;
+  let solanaSigner: SolanaSigner;
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+    solanaSigner = createMockSolanaSigner();
+    gw = new DtelecomGateway({
+      gatewayUrl: "https://x402.dtelecom.org",
+      solanaAccount: solanaSigner,
+    });
+  });
+
+  it("sends solana auth headers on requests", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        id: "acc-1",
+        wallet_address: SOLANA_ADDRESS,
+        wallet_chain: "solana",
+        credit_balance: "5000000",
+        available_balance: "4000000",
+        max_concurrent_sessions: 10,
+        max_api_rate: 5,
+        created_at: "2025-01-01T00:00:00Z",
+      }),
+    );
+
+    await gw.getAccount();
+
+    const [, init] = mockFetch.mock.calls[0];
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toMatch(/^solana:.+$/);
+    expect(headers["X-Wallet-Chain"]).toBe("solana");
+    expect(headers["X-Wallet-Address"]).toBe(SOLANA_ADDRESS);
+  });
+
+  it("sends wallet_chain: solana in buyCredits", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        account_id: "acc-1",
+        credited_microcredits: "100000",
+        amount_usd: 0.1,
+      }),
+    );
+
+    await gw.buyCredits({ amountUsd: 0.1 });
+
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.wallet_chain).toBe("solana");
+    expect(body.wallet_address).toBe(SOLANA_ADDRESS);
+  });
+});
+
+describe("DtelecomGateway constructor validation", () => {
+  it("throws if neither account nor solanaAccount provided", () => {
+    expect(
+      () => new DtelecomGateway({ gatewayUrl: "https://x402.dtelecom.org" } as DtelecomGatewayConfig),
+    ).toThrow("Either account (EVM) or solanaAccount (Solana) must be provided");
+  });
+
+  it("accepts EVM account only", () => {
+    expect(
+      () => new DtelecomGateway({ account: testAccount }),
+    ).not.toThrow();
+  });
+
+  it("accepts Solana account only", () => {
+    expect(
+      () => new DtelecomGateway({ solanaAccount: createMockSolanaSigner() }),
+    ).not.toThrow();
   });
 });

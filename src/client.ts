@@ -5,7 +5,7 @@ import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
 import { toClientEvmSigner } from "@x402/evm";
 
-import { createAuthHeaders } from "./auth.js";
+import { createAuthHeaders, createSolanaAuthHeaders } from "./auth.js";
 import {
   GatewayError,
   InsufficientCreditsError,
@@ -15,6 +15,7 @@ import {
   PaymentError,
 } from "./errors.js";
 import type {
+  SolanaSigner,
   BuyCreditsRequest,
   BuyCreditsResponse,
   AccountResponse,
@@ -49,32 +50,67 @@ export interface DtelecomGatewayConfig {
   /** Gateway base URL (default: "https://x402.dtelecom.org") */
   gatewayUrl?: string;
   /** viem LocalAccount — from privateKeyToAccount(), CDP toAccount(), KMS adapter, etc. */
-  account: LocalAccount;
+  account?: LocalAccount;
+  /** Solana signer — structurally compatible with @solana/kit KeyPairSigner */
+  solanaAccount?: SolanaSigner;
 }
 
 export class DtelecomGateway {
   private readonly baseUrl: string;
-  private readonly account: LocalAccount;
+  private readonly account?: LocalAccount;
+  private readonly solanaAccount?: SolanaSigner;
+  private readonly walletChain: "evm" | "solana";
+  private readonly walletAddress: string;
   private readonly fetchWithPayment: typeof fetch;
+  private readonly svmReady: Promise<void>;
 
   constructor(config: DtelecomGatewayConfig) {
+    if (!config.account && !config.solanaAccount) {
+      throw new Error("Either account (EVM) or solanaAccount (Solana) must be provided");
+    }
+
     this.baseUrl = (config.gatewayUrl ?? "https://x402.dtelecom.org").replace(/\/+$/, "");
     this.account = config.account;
+    this.solanaAccount = config.solanaAccount;
 
-    // Set up x402 payment client for EVM (Base mainnet)
-    const publicClient = createPublicClient({ chain: base, transport: http() });
-    const signer = toClientEvmSigner(config.account, publicClient);
     const x402 = new x402Client();
-    registerExactEvmScheme(x402, { signer });
+
+    if (config.account) {
+      this.walletChain = "evm";
+      this.walletAddress = config.account.address;
+
+      // Set up x402 payment client for EVM (Base mainnet)
+      const publicClient = createPublicClient({ chain: base, transport: http() });
+      const signer = toClientEvmSigner(config.account, publicClient);
+      registerExactEvmScheme(x402, { signer });
+      this.svmReady = Promise.resolve();
+    } else {
+      this.walletChain = "solana";
+      this.walletAddress = config.solanaAccount!.address;
+
+      // Dynamically load @x402/svm for Solana payment scheme
+      // Cast: at runtime solanaAccount is a KeyPairSigner which satisfies TransactionSigner
+      this.svmReady = import("@x402/svm/exact/client")
+        .then(({ registerExactSvmScheme }) => {
+          registerExactSvmScheme(x402, { signer: config.solanaAccount as never });
+        })
+        .catch(() => {
+          throw new Error(
+            "@x402/svm is required for Solana support. Install it: npm install @x402/svm @solana/kit",
+          );
+        });
+    }
+
     this.fetchWithPayment = wrapFetchWithPayment(fetch, x402);
   }
 
   // --- Credits ---
 
   async buyCredits(options: BuyCreditsRequest): Promise<BuyCreditsResponse> {
+    await this.svmReady;
     const r = await this.requestWithPayment("/v1/credits/purchase", {
-      wallet_address: this.account.address,
-      wallet_chain: "evm",
+      wallet_address: this.walletAddress,
+      wallet_chain: this.walletChain,
       amount_usd: options.amountUsd,
     });
     return {
@@ -321,7 +357,9 @@ export class DtelecomGateway {
     path: string,
     body?: unknown,
   ): Promise<Raw> {
-    const headers = await createAuthHeaders(this.account, method, path);
+    const headers = this.account
+      ? await createAuthHeaders(this.account, method, path)
+      : await createSolanaAuthHeaders(this.solanaAccount!, method, path);
     const init: RequestInit = {
       method,
       headers: {
