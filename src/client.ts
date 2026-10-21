@@ -16,6 +16,14 @@ import {
 } from "./errors.js";
 import type {
   SolanaSigner,
+  CreateFileTranscriptionRequest,
+  FileTranscriptionJob,
+  CreateVisionSnapshotRequest,
+  VisionSnapshot,
+  ModerationInference,
+  ModerationStreamTicket,
+  TranslateRequest,
+  TranslationRequest,
   BuyCreditsRequest,
   BuyCreditsResponse,
   AccountResponse,
@@ -350,23 +358,95 @@ export class DtelecomGateway {
     };
   }
 
+  /** Upload a file for asynchronous transcription. No automatic upload retry. */
+  async createFileTranscription(options: CreateFileTranscriptionRequest): Promise<FileTranscriptionJob> {
+    if (!/^[\x21-\x7e]{1,128}$/.test(options.idempotencyKey)) throw new Error("A valid idempotencyKey is required");
+    const form = new FormData();
+    form.append("file", options.file, options.filename ?? "audio.media");
+    if (options.language !== undefined) form.append("language", options.language);
+    if (options.diarize !== undefined) form.append("diarize", String(options.diarize));
+    return mapFileJob(await this.request("POST", "/v1/transcriptions/jobs", form, { "Idempotency-Key": options.idempotencyKey }));
+  }
+
+  async getFileTranscription(jobId: string): Promise<FileTranscriptionJob> {
+    return mapFileJob(await this.request("GET", `/v1/transcriptions/jobs/${encodeURIComponent(jobId)}`));
+  }
+
+  /** Cancels unfinished work; completed result deletion preserves its charge. */
+  async deleteFileTranscription(jobId: string): Promise<FileTranscriptionJob> {
+    return mapFileJob(await this.request("DELETE", `/v1/transcriptions/jobs/${encodeURIComponent(jobId)}`));
+  }
+
+  /** Own-model snapshot analysis. No automatic retry or credit purchase. */
+  async createVisionSnapshot(options: CreateVisionSnapshotRequest): Promise<VisionSnapshot> {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(options.idempotencyKey)) throw new Error("A valid idempotencyKey is required");
+    const form = new FormData();
+    form.append("image", options.image, "image.media");
+    if (options.question !== undefined) form.append("question", options.question);
+    return mapVisionSnapshot(await this.request("POST", "/v1/vision/snapshot", form, { "Idempotency-Key": options.idempotencyKey }));
+  }
+
+  /** Poll an in-flight request or retrieve its persisted answer without another charge. */
+  async getVisionSnapshot(requestId: string): Promise<VisionSnapshot> {
+    return mapVisionSnapshot(await this.request("GET", `/v1/vision/requests/${encodeURIComponent(requestId)}`));
+  }
+
+  /** No room, WebRTC session or prepaid duration is required. */
+  async createModerationStream(): Promise<ModerationStreamTicket> {
+    const r = await this.request("POST", "/v1/moderation/streams");
+    const url = new URL("/v1/moderation/stream", this.baseUrl);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    return { token: r.token, websocketUrl: url.toString(), expiresAt: r.expires_at, protocol: r.protocol };
+  }
+
+  async moderateAudio(options: { audio: Blob; language?: string; idempotencyKey: string }): Promise<ModerationInference> {
+    return this.uploadModeration("audio", options.audio, options.idempotencyKey, options.language);
+  }
+  async moderateVideoFrame(options: { image: Blob; idempotencyKey: string }): Promise<ModerationInference> {
+    return this.uploadModeration("video-frame", options.image, options.idempotencyKey);
+  }
+  async getModerationRequest(id: string): Promise<ModerationInference> {
+    return mapModerationInference(await this.request("GET", `/v1/moderation/requests/${encodeURIComponent(id)}`));
+  }
+  private async uploadModeration(path: "audio" | "video-frame", media: Blob, key: string, language?: string): Promise<ModerationInference> {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(key)) throw new Error("A valid idempotencyKey is required");
+    const form = new FormData(); form.append(path === "audio" ? "audio" : "image", media, "media.bin");
+    if (language !== undefined) form.append("language", language);
+    return mapModerationInference(await this.request("POST", `/v1/moderation/${path}`, form, { "Idempotency-Key": key }));
+  }
+
+  /** Text translation billed per Unicode code point of `q`. No automatic retry or credit purchase. */
+  async translate(options: TranslateRequest): Promise<TranslationRequest> {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(options.idempotencyKey)) throw new Error("A valid idempotencyKey is required");
+    const body = { q: options.q, target: options.target, ...(options.source !== undefined ? { source: options.source } : {}) };
+    return mapTranslation(await this.request("POST", "/v1/translation", body, { "Idempotency-Key": options.idempotencyKey }));
+  }
+
+  /** Poll an in-flight translation or retrieve its persisted result without another charge. */
+  async getTranslation(id: string): Promise<TranslationRequest> {
+    return mapTranslation(await this.request("GET", `/v1/translation/requests/${encodeURIComponent(id)}`));
+  }
+
   // --- Internal: authenticated request ---
 
   private async request(
     method: string,
     path: string,
     body?: unknown,
+    extraHeaders?: Record<string, string>,
   ): Promise<Raw> {
     const headers = this.account
       ? await createAuthHeaders(this.account, method, path)
       : await createSolanaAuthHeaders(this.solanaAccount!, method, path);
+    const multipart = body instanceof FormData;
     const init: RequestInit = {
       method,
       headers: {
         ...headers,
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...extraHeaders,
+        ...(!multipart && body !== undefined ? { "Content-Type": "application/json" } : {}),
       },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      ...(body !== undefined ? { body: multipart ? body : JSON.stringify(body) } : {}),
     };
 
     const resp = await fetch(`${this.baseUrl}${path}`, init);
@@ -458,4 +538,38 @@ function mapSession(r: Raw): Session {
     settlementMethod: r.settlement_method,
     createdAt: r.created_at,
   };
+}
+
+function mapFileJob(r: Raw): FileTranscriptionJob {
+  return { id: r.id, status: r.status, durationSeconds: r.duration_seconds, result: r.result, error: r.error };
+}
+
+function mapVisionSnapshot(r: Raw): VisionSnapshot {
+  const value = r.result;
+  return { id: r.id, status: r.status, chargedMicrocredits: r.charged_microcredits,
+    ...(r.error !== undefined ? { error: r.error } : {}),
+    ...(value ? { result: { requestId: value.request_id,
+      answer: value.answer, model: value.model, generatedTokens: value.generated_tokens, promptTokens: value.prompt_tokens,
+      finishReason: value.finish_reason, outputTokenLimitReached: value.output_token_limit_reached,
+      usage: { completedSnapshots: value.usage.completed_snapshots } } } : {}) };
+}
+
+export function mapModerationInference(r: Raw): ModerationInference {
+  if (!r || typeof r !== "object" || Array.isArray(r) || typeof r.id !== "string" || !r.id ||
+      !["moderation-audio", "moderation-video"].includes(r.kind) || !["running", "completed", "failed"].includes(r.status) ||
+      typeof r.charged_microcredits !== "string" || !/^[0-9]+$/.test(r.charged_microcredits)) throw new Error("Invalid moderation response");
+  return { id: r.id, kind: r.kind, status: r.status, chargedMicrocredits: r.charged_microcredits,
+    ...(r.result ? { result: r.result } : {}), ...(r.error ? { error: r.error } : {}) };
+}
+
+function mapTranslation(r: Raw): TranslationRequest {
+  if (!r || typeof r !== "object" || Array.isArray(r) || typeof r.id !== "string" || !r.id || r.kind !== "translation" ||
+      !["running", "completed", "failed"].includes(r.status) ||
+      typeof r.charged_microcredits !== "string" || !/^[0-9]+$/.test(r.charged_microcredits)) throw new Error("Invalid translation response");
+  const value = r.result;
+  return { id: r.id, kind: r.kind, status: r.status, chargedMicrocredits: r.charged_microcredits,
+    ...(r.error ? { error: r.error } : {}),
+    ...(value ? { result: { translatedText: value.translated_text, source: value.source, target: value.target,
+      ...(value.detected_language ? { detectedLanguage: { language: value.detected_language.language, confidence: value.detected_language.confidence } } : {}),
+      usage: { characters: value.usage.characters, ...(typeof value.usage.output_tokens === "number" ? { outputTokens: value.usage.output_tokens } : {}) } } } : {}) };
 }

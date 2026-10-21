@@ -4,3 +4,6 @@ export * from "./types.js";
 export * from "./errors.js";
 export { createAuthHeaders, createSolanaAuthHeaders } from "./auth.js";
 export type { AuthHeaders } from "./auth.js";
+export * from "./speech.js";
+export { ModerationStream } from "./moderation.js";
+export type { ModerationSocket, ModerationSocketFactory } from "./moderation.js";

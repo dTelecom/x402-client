@@ -128,6 +128,8 @@ Exactly one of `account` or `solanaAccount` must be provided. `gatewayUrl` defau
 
 ### Agent Session (WebRTC + STT + TTS bundle)
 
+For a speech session's `serverUrl`, use `toSpeechWebSocketUrl(serverUrl)` to connect to `/v1/stream`, and send the returned session token as `session_key` in the first message. The helper accepts HTTP/WebSocket schemes and avoids adding the path twice.
+
 | Method | Description |
 |--------|-------------|
 | `createAgentSession({ roomName, participantIdentity, durationMinutes, language?, ttsMaxCharacters?, metadata?, clientIdentity?, clientIp? })` | Create bundled session |
@@ -185,11 +187,19 @@ try {
 | Service | Rate | Unit |
 |---------|------|------|
 | WebRTC | $0.001 | per minute |
-| STT | $0.006 | per minute |
-| TTS | $0.008 | per 1K characters |
+| STT | $0.004 | per minute |
+| TTS | $0.006 | per 1K characters |
 
 1 USD = 1,000,000 microcredits.
+
+## Local inference candidate
+
+`createVisionSnapshot({ image, question?, idempotencyKey })` uploads an image to our vision model. For live moderation, use `createModerationStream()` and `ModerationStream.connect(ticket)`, then send PCM audio chunks or sampled image frames and receive correlated results. `moderateAudio`, `moderateVideoFrame` and `getModerationRequest` provide HTTP alternatives. Clients own capture, sampling and rooms; no WebRTC session is required by these APIs. Direct internal services remain unauthenticated/unbilled. No automatic retries or credit purchases occur. See [the contract and limits](../tasks/inference-api/README.md). This local candidate is unpublished and disabled in production; earlier unpublished room-bound moderation methods have been superseded.
+
+`translate({ q, target, source?, idempotencyKey })` translates text (source defaults to `auto`) and `getTranslation(id)` polls or retrieves a persisted result without another charge. Billing is 5 microcredits per Unicode code point of `q` ($5 per 1M characters), charged only on success; the default limit is 500 code points per request (sized so the densest measured script, Chinese, fits the backend's output budget). A translation the backend would truncate is rejected and not charged; `result.usage.outputTokens` reports model output tokens when available. No automatic retries or credit purchases occur. This local candidate is unpublished and disabled in production.
 
 ## License
 
 MIT
+
+Runnable paid/direct HTTP and WebSocket examples, including PCM formatting and file polling: [inference examples](examples/inference/README.md).

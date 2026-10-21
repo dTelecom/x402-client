@@ -95,6 +95,124 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+describe("image and moderation inference", () => {
+  beforeEach(() => mockFetch.mockReset());
+  it("uploads an image/question with wallet auth and no room identifiers", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: "image-id", status: "completed", charged_microcredits: "2000", result: {
+      request_id: "image-id", answer: "Blue.", model: "gemma-4-e2b-it-4bit", generated_tokens: 2,
+      prompt_tokens: 300, finish_reason: "stop", output_token_limit_reached: false, usage: { completed_snapshots: 1 },
+    } }));
+    const client = new DtelecomGateway({ account: testAccount });
+    const response = await client.createVisionSnapshot({ image: new Blob(["image"]), question: "What color?", idempotencyKey: "snapshot-1" });
+    expect(response.result).toMatchObject({ answer: "Blue.", generatedTokens: 2, usage: { completedSnapshots: 1 } });
+    const [url, init] = mockFetch.mock.calls[0]; expect(url).toContain("/v1/vision/snapshot");
+    expect(init!.headers).toMatchObject({ "Idempotency-Key": "snapshot-1", "X-Wallet-Address": testAccount.address });
+    const form = init!.body as FormData; expect([...form.keys()].sort()).toEqual(["image", "question"]);
+    expect(await (form.get("image") as Blob).text()).toBe("image");
+    expect((init!.headers as any)["Content-Type"]).toBeUndefined();
+  });
+  it("polls results without uploading or buying credits", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: "id", status: "running", charged_microcredits: "0" }));
+    const client = new DtelecomGateway({ account: testAccount });
+    expect((await client.getVisionSnapshot("id")).status).toBe("running");
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: "id", kind: "moderation-video", status: "failed", charged_microcredits: "0", error: "inference_rejected" }));
+    expect((await client.getModerationRequest("id")).error).toBe("inference_rejected");
+    expect(mockFetch.mock.calls.map(c => c[1]!.method)).toEqual(["GET", "GET"]);
+  });
+  it("returns a short-lived WebSocket ticket without room/session prerequisites", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ token: "ticket", expires_at: "later", protocol: "dtelecom.moderation.v1" }));
+    const ticket = await new DtelecomGateway({ account: testAccount }).createModerationStream();
+    expect(ticket.websocketUrl).toBe("wss://x402.dtelecom.org/v1/moderation/stream");
+    expect(ticket.token).toBe("ticket");
+    expect(mockFetch.mock.calls[0][1]!.body).toBeUndefined();
+  });
+  it("uploads audio/video over HTTP when streaming is unnecessary", async () => {
+    const client = new DtelecomGateway({ account: testAccount });
+    mockFetch.mockImplementation(async () => jsonResponse({ id: "id", kind: "moderation-audio", status: "completed", charged_microcredits: "134" }));
+    await client.moderateAudio({ audio: new Blob([new Uint8Array(64000)]), language: "ar", idempotencyKey: "audio-1" });
+    expect((mockFetch.mock.calls[0][1]!.body as FormData).get("language")).toBe("ar");
+    await client.moderateVideoFrame({ image: new Blob(["image"]), idempotencyKey: "video-1" });
+    expect((mockFetch.mock.calls[1][1]!.body as FormData).has("image")).toBe(true);
+  });
+  it("rejects bad idempotency keys before upload", async () => {
+    const client = new DtelecomGateway({ account: testAccount });
+    await expect(client.createVisionSnapshot({ image: new Blob(), idempotencyKey: "" })).rejects.toThrow("idempotencyKey");
+    await expect(client.moderateAudio({ audio: new Blob(), idempotencyKey: "bad key" })).rejects.toThrow("idempotencyKey");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+  it("surfaces payment/conflict/expiry without purchasing or retrying", async () => {
+    const client = new DtelecomGateway({ account: testAccount });
+    for (const status of [402, 409, 410]) {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ error: "rejected" }, status));
+      await expect(client.createVisionSnapshot({ image: new Blob(["image"]), idempotencyKey: "same" })).rejects.toThrow("rejected");
+    }
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("translation", () => {
+  beforeEach(() => mockFetch.mockReset());
+  const completed = { id: "tr-id", kind: "translation", status: "completed", charged_microcredits: "25", result: {
+    translated_text: "Hola", source: "en", target: "es", detected_language: { language: "en", confidence: 0.98 }, usage: { characters: 5 },
+  } };
+  it("posts JSON text with a signed pathname and passes the idempotency key through", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse(completed));
+    const client = new DtelecomGateway({ account: testAccount });
+    await client.translate({ q: "Hello", target: "es", source: "en", idempotencyKey: "tr-1" });
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://x402.dtelecom.org/v1/translation");
+    expect(init!.method).toBe("POST");
+    const headers = init!.headers as Record<string, string>;
+    expect(headers).toMatchObject({ "Idempotency-Key": "tr-1", "Content-Type": "application/json", "X-Wallet-Address": testAccount.address });
+    expect(JSON.parse(init!.body as string)).toEqual({ q: "Hello", target: "es", source: "en" });
+    const valid = await verifyMessage({ address: testAccount.address, message: `POST\n/v1/translation\n${headers["X-Timestamp"]}`,
+      signature: headers.Authorization.slice(4) as `0x${string}` });
+    expect(valid).toBe(true);
+  });
+  it("omits source when unset so the gateway defaults to auto", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse(completed));
+    await new DtelecomGateway({ account: testAccount }).translate({ q: "Hello", target: "es", idempotencyKey: "tr-2" });
+    expect(JSON.parse(mockFetch.mock.calls[0][1]!.body as string)).toEqual({ q: "Hello", target: "es" });
+  });
+  it("maps a completed result field by field", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse(completed));
+    expect(await new DtelecomGateway({ account: testAccount }).translate({ q: "Hello", target: "es", idempotencyKey: "tr-3" })).toEqual({
+      id: "tr-id", kind: "translation", status: "completed", chargedMicrocredits: "25",
+      result: { translatedText: "Hola", source: "en", target: "es", detectedLanguage: { language: "en", confidence: 0.98 }, usage: { characters: 5 } },
+    });
+  });
+  it("maps backend output tokens when the gateway reports them", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ ...completed, result: { ...completed.result, usage: { characters: 5, output_tokens: 3 } } }));
+    expect((await new DtelecomGateway({ account: testAccount }).translate({ q: "Hello", target: "es", idempotencyKey: "tr-7" })).result!.usage)
+      .toEqual({ characters: 5, outputTokens: 3 });
+  });
+  it("returns a running request (202) and polls it with GET", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: "tr-id", kind: "translation", status: "running", charged_microcredits: "0" }, 202));
+    const client = new DtelecomGateway({ account: testAccount });
+    expect(await client.translate({ q: "Hello", target: "es", idempotencyKey: "tr-4" })).toEqual({ id: "tr-id", kind: "translation", status: "running", chargedMicrocredits: "0" });
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: "tr-id", kind: "translation", status: "failed", charged_microcredits: "0", error: "inference_backend_failure" }));
+    expect(await client.getTranslation("tr-id")).toEqual({ id: "tr-id", kind: "translation", status: "failed", chargedMicrocredits: "0", error: "inference_backend_failure" });
+    const [url, init] = mockFetch.mock.calls[1]; expect(url).toContain("/v1/translation/requests/tr-id"); expect(init!.method).toBe("GET");
+  });
+  it("surfaces failed requests and payment errors without retrying or buying credits", async () => {
+    const client = new DtelecomGateway({ account: testAccount });
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: "tr-id", kind: "translation", status: "failed", charged_microcredits: "0", error: "inference_rejected" }, 422));
+    await expect(client.translate({ q: "Hello", target: "xx", idempotencyKey: "tr-5" })).rejects.toMatchObject({ status: 422, message: "inference_rejected" });
+    mockFetch.mockResolvedValueOnce(jsonResponse({ error: "Insufficient credits" }, 402));
+    await expect(client.translate({ q: "Hello", target: "es", idempotencyKey: "tr-6" })).rejects.toBeInstanceOf(InsufficientCreditsError);
+    mockFetch.mockResolvedValueOnce(jsonResponse({ error: "Idempotency-Key belongs to different input" }, 409));
+    await expect(client.translate({ q: "Other", target: "es", idempotencyKey: "tr-6" })).rejects.toThrow("different input");
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+  it("rejects bad idempotency keys and malformed responses", async () => {
+    const client = new DtelecomGateway({ account: testAccount });
+    await expect(client.translate({ q: "Hello", target: "es", idempotencyKey: "bad key" })).rejects.toThrow("idempotencyKey");
+    expect(mockFetch).not.toHaveBeenCalled();
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: "tr-id", kind: "moderation-audio", status: "completed", charged_microcredits: "25" }));
+    await expect(client.translate({ q: "Hello", target: "es", idempotencyKey: "tr-7" })).rejects.toThrow("Invalid translation response");
+  });
+});
+
 describe("createAuthHeaders", () => {
   it("produces correct header structure", async () => {
     const headers = await createAuthHeaders(testAccount, "GET", "/v1/account");
@@ -774,5 +892,34 @@ describe("DtelecomGateway constructor validation", () => {
     expect(
       () => new DtelecomGateway({ solanaAccount: createMockSolanaSigner() }),
     ).not.toThrow();
+  });
+});
+
+describe("file transcription SDK", () => {
+  beforeEach(()=>mockFetch.mockReset());
+  it("sends authenticated multipart with the same caller idempotency key and preserves the file",async()=>{
+    const gateway=new DtelecomGateway({account:testAccount});
+    mockFetch.mockResolvedValue(Response.json({id:"file-job",status:"queued",duration_seconds:1.0000625}));
+    const file=new Blob(["binary audio"],{type:"audio/wav"});
+    const job=await gateway.createFileTranscription({file,idempotencyKey:"stable-key",diarize:true,language:"en"});
+    expect(job.durationSeconds).toBe(1.0000625);
+    const [url,init]=mockFetch.mock.calls[0];expect(String(url)).toContain("/v1/transcriptions/jobs");
+    expect((init!.headers as any)["Idempotency-Key"]).toBe("stable-key");expect((init!.headers as any)["Content-Type"]).toBeUndefined();
+    expect((init!.headers as any).Authorization).toMatch(/^evm:/);
+    const form=init!.body as FormData;expect(form.get("language")).toBe("en");expect(form.get("diarize")).toBe("true");
+    expect(await (form.get("file") as Blob).text()).toBe("binary audio");
+  });
+  it("retrieves and deletes a job without uploading or purchasing again",async()=>{
+    const gateway=new DtelecomGateway({account:testAccount});
+    mockFetch.mockResolvedValueOnce(Response.json({id:"file-job",status:"completed",result:{text:"hello"}}));
+    expect((await gateway.getFileTranscription("file-job")).result?.text).toBe("hello");
+    mockFetch.mockResolvedValueOnce(Response.json({id:"file-job",status:"deleted"}));
+    expect((await gateway.deleteFileTranscription("file-job")).status).toBe("deleted");
+    expect(mockFetch.mock.calls.map(call=>call[1]?.method)).toEqual(["GET","DELETE"]);
+  });
+  it("rejects invalid retry keys before making an upload",async()=>{
+    const gateway=new DtelecomGateway({account:testAccount});
+    await expect(gateway.createFileTranscription({file:new Blob(),idempotencyKey:""})).rejects.toThrow("idempotencyKey");
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
