@@ -1,6 +1,6 @@
 # @dtelecom/x402-client
 
-TypeScript SDK for the [dTelecom x402 gateway](https://x402.dtelecom.org) — buy credits with USDC and create WebRTC, STT, and TTS sessions for AI agents.
+TypeScript SDK for the [dTelecom x402 gateway](https://x402.dtelecom.org) — buy credits with USDC and create WebRTC, STT, and TTS sessions and translate text for AI agents.
 
 Uses the [x402 HTTP payment protocol](https://www.x402.org/) for on-chain micropayments on Base and Solana.
 
@@ -189,14 +189,103 @@ try {
 | WebRTC | $0.001 | per minute |
 | STT | $0.004 | per minute |
 | TTS | $0.006 | per 1K characters |
+| Translation | $5 | per 1M Unicode code points |
 
 1 USD = 1,000,000 microcredits.
 
-## Local inference candidate
+## Text translation
 
-`createVisionSnapshot({ image, question?, idempotencyKey })` uploads an image to our vision model. For live moderation, use `createModerationStream()` and `ModerationStream.connect(ticket)`, then send PCM audio chunks or sampled image frames and receive correlated results. `moderateAudio`, `moderateVideoFrame` and `getModerationRequest` provide HTTP alternatives. Clients own capture, sampling and rooms; no WebRTC session is required by these APIs. Direct internal services remain unauthenticated/unbilled. No automatic retries or credit purchases occur. See [the contract and limits](../tasks/inference-api/README.md). This local candidate is unpublished and disabled in production; earlier unpublished room-bound moderation methods have been superseded.
+`translate({ q, target, source?, idempotencyKey })` is available on the production gateway. The source defaults to `auto`. `getTranslation(id)` polls or retrieves the persisted result without another charge.
 
-`translate({ q, target, source?, idempotencyKey })` translates text (source defaults to `auto`) and `getTranslation(id)` polls or retrieves a persisted result without another charge. Billing is 5 microcredits per Unicode code point of `q` ($5 per 1M characters), charged only on success; the default limit is 500 code points per request (sized so the densest measured script, Chinese, fits the backend's output budget). A translation the backend would truncate is rejected and not charged; `result.usage.outputTokens` reports model output tokens when available. No automatic retries or credit purchases occur. This local candidate is unpublished and disabled in production.
+```typescript
+import { randomUUID } from 'node:crypto';
+
+const request = await gateway.translate({
+  q: 'Hello, how are you?', target: 'es', idempotencyKey: randomUUID(),
+});
+if (request.status === 'completed') {
+  console.log(request.result!.translatedText);
+} else if (request.status === 'running') {
+  // Poll after a delay; do not create a new request or buy credits automatically.
+  const current = await gateway.getTranslation(request.id);
+  console.log(current.status, current.result?.translatedText, current.error);
+} else {
+  console.error(request.error);
+}
+```
+
+Billing: 5 microcredits per Unicode code point ($5 per million characters), charged only on success. The request limit is 500 code points. Truncated output is rejected without charge. `result.usage.outputTokens` is optional; billing uses `result.usage.characters`. Reuse the same idempotency key and input after an uncertain response. No automatic retries or credit purchases occur. TranslateGemma currently supports 32 languages; the planned Hy-MT2 expansion is not enabled.
+
+## Speech streaming and partial transcripts
+
+The SDK creates sessions and exports typed wire messages; your WebSocket implementation sends and receives audio. Connect to `toSpeechWebSocketUrl(session.serverUrl)`, send the config, wait for `ready`, then send raw mono 16 kHz PCM16 little-endian audio.
+
+```typescript
+import {
+  toSpeechWebSocketUrl, type STTStreamConfig, type STTStreamReady,
+  type STTTranscriptEvent,
+} from '@dtelecom/x402-client';
+
+const session = await gateway.createSTTSession({ durationMinutes: 5, language: 'en' });
+const socket = new WebSocket(toSpeechWebSocketUrl(session.serverUrl));
+const config: STTStreamConfig = {
+  type: 'config', session_key: session.token, language: 'en', partials: true,
+};
+socket.addEventListener('open', () => socket.send(JSON.stringify(config)));
+socket.addEventListener('message', ({ data }) => {
+  const event = JSON.parse(String(data)) as STTStreamReady | STTTranscriptEvent;
+  switch (event.type) {
+    case 'ready':
+      // Start sending PCM here. Handle error/session-expiry messages in your app too.
+      break;
+    case 'transcription_partial':
+      // Replace the provisional window for this utterance; never append as final text.
+      console.log(event.utterance_id, event.revision, event.window_start_seconds, event.text);
+      break;
+    case 'partial_end':
+      // Clear the provisional window, including when reason is "finalizing".
+      console.log(event.utterance_id, event.reason);
+      break;
+    case 'transcription':
+      // Commit this authoritative final; it supersedes the provisional window.
+      console.log(event.utterance_id, event.text);
+      break;
+  }
+});
+```
+
+Partials are off by default. A partial is a replaceable recognition window, not a cumulative full-utterance transcript. Final-only clients retain the legacy message shape. Reconfiguration can end a provisional window with `reason: "reconfigured"`.
+
+### Smart Turn (explicit opt-in)
+
+Set `smart_turn: true` in `STTStreamConfig` to request semantic endpointing independently of partials. It needs the server's Smart Turn model and a supported ANE VAD language route. Inspect `ready.smart_turn`: `active` confirms the semantic hook; `acoustic_fallback` means ordinary silence detection. An absent field is not confirmation; a missing server model returns a configuration error.
+
+Smart Turn can preserve pauses inside a thought, but can also delay a completed answer. In the 21 October M6 natural-speech diagnostic it prevented 10 of 13 premature internal splits, while seven of 14 examples finalized in roughly 2.1–2.3 seconds. These small diagnostic samples are not a general accuracy guarantee. It remains opt-in; enabling partials does not enable Smart Turn.
+
+## TTS engines and catalog
+
+The selected production runtime offers Kokoro (54 voices, eight languages plus British English) and Supertonic (ten styles, 31 languages), covering 32 distinct languages together. Both use the same TTS rate. Keep existing Kokoro `voice`/`lang_code` requests, or explicitly select a model and language:
+
+```typescript
+import type { TTSStreamConfig, TTSStreamText } from '@dtelecom/x402-client';
+
+const session = await gateway.createTTSSession({ maxCharacters: 1000, language: 'ru' });
+const auth: TTSStreamConfig = {
+  session_key: session.token,
+  config: { model: 'supertonic', language: 'ru', voice: 'M5', speed: 1 },
+};
+const text: TTSStreamText = { text: 'Привет! Как дела?' };
+// Send auth as the first JSON message on /v1/stream, then text.
+// {"type":"capabilities"} retrieves the enabled catalog.
+```
+
+Supertonic styles: `F1`–`F5`, `M1`–`M5`. Languages: ar, bg, hr, cs, da, nl, en, et, fi, fr, de, el, hi, hu, id, it, ja, ko, lv, lt, pl, pt, ro, ru, sk, sl, es, sv, tr, uk, vi. Kokoro additionally covers Mandarin Chinese. Supported speed ranges: Kokoro 0.5–2.0; Supertonic 0.75–1.5. Use the server's capabilities response for valid model/voice/language combinations; invalid combinations are rejected. Selected-runtime voice blending is not supported.
+
+Audio is mono 48 kHz PCM16 little-endian in 20 ms frames. `clear`/`cleared` supports interruption. Watermarking is disabled and is not offered.
+
+## Optional inference APIs (not enabled in production)
+
+Version 0.3.0 also exports vision, moderation and file-transcription client methods for explicitly configured test deployments. Their presence in the SDK does not enable these services on the public gateway. Clients own capture, sampling and room logic; vision/moderation need no WebRTC session. No automatic retries or credit purchases occur. See the [inference examples](https://github.com/dTelecom/x402-client/tree/main/examples/inference) for request formats and polling.
 
 ## License
 

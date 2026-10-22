@@ -11,15 +11,26 @@ export function toSpeechWebSocketUrl(serverUrl: string): string {
 }
 
 // Wire message names intentionally match the speech server JSON contract.
-// Optional candidate controls require the corresponding upgraded speech server.
+// Optional controls require the selected speech runtime on the server.
 export interface STTStreamConfig {
   type: "config";
   session_key?: string;
   language?: string;
   model?: "whisper";
   partials?: boolean;
+  /** Opt-in semantic endpointing; verify STTStreamReady.smart_turn. */
   smart_turn?: boolean;
 }
+
+export interface STTStreamReady {
+  type: "ready";
+  client_id?: string;
+  language?: string;
+  /** Absence does not confirm Smart Turn activation. */
+  smart_turn?: "active" | "acoustic_fallback";
+}
+
+export type STTTranscriptEvent = STTFinalTranscript | STTPartialTranscript | STTPartialEnd;
 
 export interface STTFinalTranscript {
   type: "transcription";
