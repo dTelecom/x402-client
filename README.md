@@ -295,7 +295,7 @@ Runnable paid/direct HTTP and WebSocket examples, including PCM formatting and f
 
 ### Optional complete-request SSML
 
-The candidate `TTSStreamText` type accepts `input_format: "ssml"`, an optional
+The `TTSStreamText` type (0.4.0+) accepts `input_format: "ssml"`, an optional
 `request_id`, and a pronunciation `dictionary`. Send a complete `<speak>` document
 on the existing TTS WebSocket. First request `{"type":"capabilities"}` and require
 `ssml_profiles` to include `dtelecom-ssml-v1`; the types alone do not enable an older

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0 — 2026-10-22
+
+- Export optional complete-request TTS SSML wire fields and server capability types.
+- Preserve existing session APIs and plain-text speech requests.
+
 ## 0.3.0 — 2026-10-22
 
 - Add paid text translation and persisted-result retrieval, with output-token metadata and idempotency keys.
