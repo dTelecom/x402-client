@@ -81,4 +81,15 @@ export interface TTSStreamConfig {
 
 export interface TTSStreamText extends TTSVoiceOptions {
   text: string;
+  /** Complete document only; first verify capabilities.ssml_profiles. */
+  input_format?: "text" | "ssml";
+  request_id?: string;
+  /** Canonical locale -> literal source -> spoken alias. SSML only. */
+  dictionary?: Record<string, Record<string, string>>;
+}
+
+export interface TTSStreamCapabilities {
+  type: "capabilities";
+  input_formats?: Array<"text" | "ssml">;
+  ssml_profiles?: string[];
 }

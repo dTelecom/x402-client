@@ -292,3 +292,13 @@ Version 0.3.0 also exports vision, moderation and file-transcription client meth
 MIT
 
 Runnable paid/direct HTTP and WebSocket examples, including PCM formatting and file polling: [inference examples](examples/inference/README.md).
+
+### Optional complete-request SSML
+
+The candidate `TTSStreamText` type accepts `input_format: "ssml"`, an optional
+`request_id`, and a pronunciation `dictionary`. Send a complete `<speak>` document
+on the existing TTS WebSocket. First request `{"type":"capabilities"}` and require
+`ssml_profiles` to include `dtelecom-ssml-v1`; the types alone do not enable an older
+or unconfigured server. Plain text remains the default. The server validates the
+whole document and meters expanded spoken Unicode characters, excluding tags and
+breaks. Text-to-WAV and incremental XML streaming are separate, unshipped features.
