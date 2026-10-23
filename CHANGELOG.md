@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0 — 2026-10-23
+
+- Export explicit `watermark?: boolean` TTS wire controls, server availability and `TTSStreamGenerating` activation confirmation. Existing requests remain unmarked; no session or pricing API changes.
+
 ## 0.4.0 — 2026-10-22
 
 - Export optional complete-request TTS SSML wire fields and server capability types.

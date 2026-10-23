@@ -72,6 +72,10 @@ export interface TTSVoiceOptions {
   voice?: string;
   lang_code?: string;
   speed?: number;
+  /** Opt-in AudioSeal B watermark. Omitted/false leaves audio unmarked.
+   * Check capabilities.watermark === true before requesting it.
+   */
+  watermark?: boolean;
 }
 
 export interface TTSStreamConfig {
@@ -92,4 +96,14 @@ export interface TTSStreamCapabilities {
   type: "capabilities";
   input_formats?: Array<"text" | "ssml">;
   ssml_profiles?: string[];
+  /** Availability only, never an automatic opt-in. Absence means unsupported. */
+  watermark?: boolean;
+}
+
+export interface TTSStreamGenerating {
+  type: "generating";
+  text: string;
+  request_id?: string;
+  /** Required confirmation for an explicitly watermarked request, before PCM. */
+  watermark?: "active";
 }

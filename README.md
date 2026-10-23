@@ -302,3 +302,32 @@ on the existing TTS WebSocket. First request `{"type":"capabilities"}` and requi
 or unconfigured server. Plain text remains the default. The server validates the
 whole document and meters expanded spoken Unicode characters, excluding tags and
 breaks. Text-to-WAV and incremental XML streaming are separate, unshipped features.
+
+### Optional TTS watermark (0.5.0+)
+
+Watermarking is a separate explicit opt-in, like STT Smart Turn. It defaults off.
+The gateway session API is unchanged; request the feature on the TTS WebSocket:
+
+```ts
+import type { TTSStreamText } from '@dtelecom/x402-client';
+
+// After authenticating: request { type: 'capabilities' } and wait for the reply.
+// Only proceed when capabilities.watermark === true.
+const marked: TTSStreamText = { text: 'Hello!', watermark: true };
+ws.send(JSON.stringify(marked));
+// Require generating.watermark === 'active' before consuming binary PCM.
+```
+
+`TTSStreamConfig.config.watermark` can set a connection default; each text can
+override it. Omitted/false keeps the existing unmarked path. The field also
+works with `input_format: 'ssml'`. Server availability never automatically
+opts a client in. Unsupported requests fail rather than silently dropping the
+watermark. Older servers can ignore unknown fields, so both capability and
+activation checks are necessary. This package exports the wire types; your
+application owns the WebSocket and these checks. The agents-js TTS provider
+performs the checks automatically when its `watermark: true` option is used.
+
+The configuration is AudioSeal B: 48 kHz streaming, alpha 0.25, approximately
+80 ms buffering plus 5 ms inference in the M6 lab. It runs after resampling and
+SSML gain and before PCM16. There is no post-watermark audio cleanup. Detection
+uses the matching 48 kHz profile; tiny/interrupted clips may not be detectable.
