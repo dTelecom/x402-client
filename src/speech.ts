@@ -94,6 +94,13 @@ export interface TTSStreamText extends TTSVoiceOptions {
 
 export interface TTSStreamCapabilities {
   type: "capabilities";
+  models?: Record<string, {
+    languages: string[];
+    voices: Array<string | { voice: string; language: string; profile: string; lang_code: string; [key: string]: unknown }>;
+    [key: string]: unknown;
+  }>;
+  languages?: string[];
+  audio?: { encoding: "pcm_s16le"; sample_rate: 48000; channels: 1; frame_ms: 20 };
   input_formats?: Array<"text" | "ssml">;
   ssml_profiles?: string[];
   /** Availability only, never an automatic opt-in. Absence means unsupported. */
@@ -101,6 +108,10 @@ export interface TTSStreamCapabilities {
 }
 
 export interface TTSStreamGenerating {
+  /** Present for accepted SSML documents. */
+  profile?: string;
+  source_characters?: number;
+  spoken_characters?: number;
   type: "generating";
   text: string;
   request_id?: string;

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1 — 2026-10-23
+
+- Refresh all service guides, exact pricing, SSML/Smart Turn/watermark controls and batch retry/retention contracts.
+- Add optional TTS capability catalog/audio fields and SSML generation metadata types; existing callers remain compatible.
+
 ## 0.6.0 — 2026-10-23
 
 - Add asynchronous WAV creation, polling, streaming download and deletion with text/SSML controls and explicit watermark opt-in. Requires the separately enabled batch gateway; existing streaming APIs are unchanged.

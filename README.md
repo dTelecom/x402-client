@@ -1,6 +1,6 @@
 # @dtelecom/x402-client
 
-TypeScript SDK for the [dTelecom x402 gateway](https://x402.dtelecom.org) — buy credits with USDC and create WebRTC, STT, and TTS sessions and translate text for AI agents.
+TypeScript SDK for the [dTelecom x402 gateway](https://x402.dtelecom.org) — buy credits with USDC and use WebRTC, streaming speech, translation, file transcription with diarization, text/SSML-to-WAV, vision and audio/image moderation.
 
 Uses the [x402 HTTP payment protocol](https://www.x402.org/) for on-chain micropayments on Base and Solana.
 
@@ -186,12 +186,17 @@ try {
 
 | Service | Rate | Unit |
 |---------|------|------|
-| WebRTC | $0.001 | per minute |
-| STT | $0.004 | per minute |
+| WebRTC | $0.001 | per audio participant minute |
+| Streaming STT | $0.004 | per connected STT session minute |
 | TTS | $0.006 | per 1K characters |
-| Translation | $5 | per 1M Unicode code points |
+| Translation | $5 | per 1M input Unicode code points |
+| File transcription + diarization | $0.003 | per decoded audio minute; 50 microcredits per started second |
+| Text/SSML to WAV | $0.006 | per 1K expanded spoken Unicode code points |
+| Vision snapshot | $0.002 | per completed snapshot |
+| Audio moderation | $0.004 | per submitted audio minute |
+| Image/frame moderation | $0.0005 | per completed frame |
 
-1 USD = 1,000,000 microcredits.
+1 USD = 1,000,000 microcredits. Two audio participants + one live STT session + 500 spoken TTS characters/minute cost $0.009/minute, excluding the LLM. Smart Turn, partials, SSML and optional watermark do not add a price multiplier. Check [live pricing](https://x402.dtelecom.org/v1/pricing) for enabled services. The SDK buys USDC credits on Base/Solana; other gateway payment rails require their own integrations.
 
 ## Text translation
 
@@ -214,7 +219,7 @@ if (request.status === 'completed') {
 }
 ```
 
-Billing: 5 microcredits per Unicode code point ($5 per million characters), charged only on success. The request limit is 500 code points. Truncated output is rejected without charge. `result.usage.outputTokens` is optional; billing uses `result.usage.characters`. Reuse the same idempotency key and input after an uncertain response. No automatic retries or credit purchases occur. TranslateGemma currently supports 32 languages; the planned Hy-MT2 expansion is not enabled.
+Billing: 5 microcredits per Unicode code point ($5 per million characters), charged only on success. The request limit is 500 code points. Truncated output is rejected without charge. `result.usage.outputTokens` is optional; billing uses `result.usage.characters`. Reuse the same idempotency key and input after an uncertain response. No automatic retries or credit purchases occur. TranslateGemma 4B + Hy-MT2 1.8B cover 45 language/script entries. A pair must share an enabled model; no pivot is performed (fa→en works, fa→sv does not). Hy-MT2 excludes es/ja/nl (Gemma retains them) and bo/mn/ug. Use explicit zh, zh-Hant or yue for Chinese script/variety; fil aliases tl. See the [route table](https://x402.dtelecom.org/docs.md#expanded-translation-routes). Dense input can still exceed token bounds (413).
 
 ## Speech streaming and partial transcripts
 
@@ -260,7 +265,7 @@ Partials are off by default. A partial is a replaceable recognition window, not 
 
 Set `smart_turn: true` in `STTStreamConfig` to request semantic endpointing independently of partials. It needs the server's Smart Turn model and a supported ANE VAD language route. Inspect `ready.smart_turn`: `active` confirms the semantic hook; `acoustic_fallback` means ordinary silence detection. An absent field is not confirmation; a missing server model returns a configuration error.
 
-Smart Turn can preserve pauses inside a thought, but can also delay a completed answer. In the 21 October M6 natural-speech diagnostic it prevented 10 of 13 premature internal splits, while seven of 14 examples finalized in roughly 2.1–2.3 seconds. These small diagnostic samples are not a general accuracy guarantee. It remains opt-in; enabling partials does not enable Smart Turn.
+Smart Turn can preserve pauses inside a thought. Current server defaults are threshold 0.5, minimum pause 500 ms, maximum 2,000 ms of received silence and a 250 ms classifier deadline. These are not microphone-to-final latency guarantees. Continuous PCM silence is required; WebRTC consumers should use server-sdk-node 0.2.6 or later for DTX/stalled-input silence reconstruction. Earlier 21 October diagnostic results predate these fixes. See the [current speech contract](https://x402.dtelecom.org/docs.md#streaming-speech-controls).
 
 ## TTS engines and catalog
 
@@ -281,17 +286,46 @@ const text: TTSStreamText = { text: 'Привет! Как дела?' };
 
 Supertonic styles: `F1`–`F5`, `M1`–`M5`. Languages: ar, bg, hr, cs, da, nl, en, et, fi, fr, de, el, hi, hu, id, it, ja, ko, lv, lt, pl, pt, ro, ru, sk, sl, es, sv, tr, uk, vi. Kokoro additionally covers Mandarin Chinese. Supported speed ranges: Kokoro 0.5–2.0; Supertonic 0.75–1.5. Use the server's capabilities response for valid model/voice/language combinations; invalid combinations are rejected. Selected-runtime voice blending is not supported.
 
-Audio is mono 48 kHz PCM16 little-endian in 20 ms frames. `clear`/`cleared` supports interruption. Watermarking is disabled and is not offered.
+Audio is mono 48 kHz PCM16 little-endian in 20 ms frames. `clear`/`cleared` supports interruption. Watermarking defaults off and is explicitly opt-in; see activation checks below.
 
-## Optional inference APIs (not enabled in production)
+## File, vision and moderation APIs
 
-Version 0.3.0 also exports vision, moderation and file-transcription client methods for explicitly configured test deployments. Their presence in the SDK does not enable these services on the public gateway. Clients own capture, sampling and room logic; vision/moderation need no WebRTC session. No automatic retries or credit purchases occur. See the [inference examples](https://github.com/dTelecom/x402-client/tree/main/examples/inference) for request formats and polling.
+These APIs are enabled on the production gateway. They use prepaid credits and wallet authentication; no WebRTC room is required. The SDK owns neither capture nor sampling, and does not automatically fund, retry or poll.
 
-## License
+| Methods | Purpose |
+|---|---|
+| `createFileTranscription`, `getFileTranscription`, `deleteFileTranscription` | Upload, poll, cancel/delete transcription with optional diarization |
+| `createWav`, `getWav`, `downloadWav`, `deleteWav` | Text/SSML-to-WAV jobs and private downloads |
+| `createVisionSnapshot`, `getVisionSnapshot` | Uploaded image + optional question |
+| `moderateAudio`, `moderateVideoFrame`, `getModerationRequest` | Submitted PCM audio or image/frame moderation |
+| `createModerationStream`, `ModerationStream.sendAudio`, `ModerationStream.sendVideoFrame` | Ticket-authenticated WebSocket moderation |
+| `translate`, `getTranslation` | Translate and recover a stored result |
 
-MIT
+```ts
+const job = await gateway.createFileTranscription({
+  file: new Blob([audioBytes]), filename: 'meeting.wav',
+  language: 'en', diarize: true, idempotencyKey: crypto.randomUUID(),
+});
+const state = await gateway.getFileTranscription(job.id); // poll after a delay if nonterminal
+if (state.status === 'completed') console.log(state.result?.segments);
 
-Runnable paid/direct HTTP and WebSocket examples, including PCM formatting and file polling: [inference examples](examples/inference/README.md).
+const snapshot = await gateway.createVisionSnapshot({
+  image: new Blob([imageBytes], { type: 'image/jpeg' }),
+  question: 'What is visible?', idempotencyKey: crypto.randomUUID(),
+});
+```
+
+File uploads: ≤256 MiB, ≤2 hours decoded, explicit Whisper language (default en; no auto), diarization on by default. Speaker labels are anonymous and file-local, not person identity or guaranteed overlapping-speaker separation. Live partials/Smart Turn do not apply. Supported audio/video container families and decoder constraints are in the [API reference](https://x402.dtelecom.org/docs.md#file-transcription-and-diarization).
+
+Vision and frame moderation: static JPEG/PNG/WebP ≤6 MiB and 4 million pixels. Vision questions ≤4,000 code points and answers bounded to 96 output tokens. Audio moderation: raw PCM16 little-endian mono 16 kHz, ≤30 seconds, with no WAV header. Clients sample video and choose any moderation actions. Verdicts are combined policy results; native scores are uncalibrated, and an error is never a pass. No public text-moderation or full-video upload endpoint is provided.
+
+Use [runnable inference examples](https://github.com/dTelecom/x402-client/tree/main/examples/inference) for HTTP, WebSocket and polling. The socket allows one in-flight item, uses a 10-minute ticket, and shares idempotency with HTTP. Disconnect does not cancel accepted work.
+
+### Retry, retention and cleanup
+
+Reuse the original key after an uncertain reply. File transcription returns the original job without comparing a repeated upload: use a new key for new media/options. WAV compares JSON; vision/moderation/translation compare their inputs, returning 409 on changed input. File/WAV keys allow printable ASCII without spaces; other inference keys allow letters/digits/underscore/hyphen; all are 1–128 characters. Replaying a failed key returns its failure; reconcile before submitting a new attempt.
+
+Poll accepted IDs until terminal. Respect 429/Retry-After. Results/artifacts are private to the wallet and retained for 24 hours. Completed work is charged once; deleting it does not refund it. Pending cancellation can race with completion. Completed deleted file/WAV jobs return 404; failed/cancelled jobs can retain status-only tombstones after deletion. Expired vision/moderation/translation results return 410. Failed/cancelled batch jobs release reservations.
 
 ### Optional complete-request SSML
 
@@ -301,7 +335,17 @@ on the existing TTS WebSocket. First request `{"type":"capabilities"}` and requi
 `ssml_profiles` to include `dtelecom-ssml-v1`; the types alone do not enable an older
 or unconfigured server. Plain text remains the default. The server validates the
 whole document and meters expanded spoken Unicode characters, excluding tags and
-breaks. Text-to-WAV and incremental XML streaming are separate, unshipped features.
+breaks. Text-to-WAV is available below; incremental XML streaming is not supported.
+
+The [public SSML contract](https://x402.dtelecom.org/docs.md#ssml-dtelecom-ssml-v1) documents speak/p/s, timed break, sub alias, say-as characters (en/ar), prosody rate/volume, lang, voice and pronunciation dictionaries. Keep one engine per document. Effective SSML speed is 0.75–1.5; volume −12 to +6 dB; individual breaks ≤5 s, summed breaks ≤30 s, rounded to 20 ms frames. Source/expanded text ≤64 KiB, depth ≤16, nodes ≤2,048, rendered output ≤60 s. WAV jobs additionally cap source/expanded text at 10,000 code points. No marks, pitch, external audio or cross-engine switching.
+
+```ts
+const bilingual: TTSStreamText = {
+  text: '<speak>Hello!<lang xml:lang="ru">Привет!</lang></speak>',
+  input_format: 'ssml', voice: 'M5', language: 'en',
+};
+// Send the complete document after authenticating and negotiating capabilities.
+```
 
 ### Optional TTS watermark (0.5.0+)
 
@@ -332,11 +376,9 @@ The configuration is AudioSeal B: 48 kHz streaming, alpha 0.25, approximately
 SSML gain and before PCM16. There is no post-watermark audio cleanup. Detection
 uses the matching 48 kHz profile; tiny/interrupted clips may not be detectable.
 
-## Batch WAV jobs (unreleased candidate)
+## Batch WAV jobs
 
-The methods below require a gateway with `TTS_WAV_ENABLED=true` and a deployed
-batch worker. This source addition does not enable production endpoints. Existing
-streaming TTS/translation methods are unchanged.
+These methods are available on the production gateway. Self-hosted gateways must enable `TTS_WAV_ENABLED` and configure a batch worker.
 
 ```ts
 const job = await gateway.createWav({
@@ -361,7 +403,7 @@ if (state.status === "completed") {
 The result is a complete 48 kHz mono PCM16 WAV. Inputs support the same voice,
 language, speed and SSML/dictionary controls as streaming speech. Watermark stays
 off unless explicitly requested. The gateway limits text and expanded spoken text
-to 10,000 code points, JSON to 64 KiB and output to 30 minutes. Artifacts expire
+to 10,000 code points, JSON to 64 KiB and output to 30 minutes. A separate 60-second rendering limit applies per SSML document. WAV accepts voice/language, but not the streaming model/lang_code fields. Artifacts expire
 after 24 hours and only the owning wallet can download them.
 
 POST retries reuse the same key and identical input; changing input with an
@@ -373,4 +415,8 @@ work. Cancellation/failure before completion releases reserved credits.
 File transcription continues to use `createFileTranscription`,
 `getFileTranscription`, and `deleteFileTranscription`. Its batch implementation
 uses resident Whisper with optional diarization; it does not require a WebRTC room.
-New package publication and production activation are separate release steps.
+
+
+## License
+
+MIT
