@@ -217,6 +217,36 @@ export interface FileTranscriptionJob {
   error?: string;
 }
 
+export interface CreateWavRequest {
+  text: string;
+  /** Reusing a key with different text/options fails with HTTP 409. */
+  idempotencyKey: string;
+  voice?: string;
+  language?: string;
+  speed?: number;
+  inputFormat?: "text" | "ssml";
+  dictionary?: Record<string, Record<string, string>>;
+  /** Explicit opt-in; false when omitted. */
+  watermark?: boolean;
+}
+
+export interface WavJob {
+  id: string;
+  status: FileTranscriptionJob["status"];
+  characters?: number;
+  error?: string;
+  result?: {
+    characters: number;
+    sample_rate: 48000;
+    channels: 1;
+    encoding: "pcm_s16le";
+    samples: number;
+    bytes: number;
+    sha256: string;
+    watermark: boolean;
+  };
+}
+
 export interface CreateVisionSnapshotRequest {
   image: Blob;
   idempotencyKey: string;

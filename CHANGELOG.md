@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0 — 2026-10-23
+
+- Add asynchronous WAV creation, polling, streaming download and deletion with text/SSML controls and explicit watermark opt-in. Requires the separately enabled batch gateway; existing streaming APIs are unchanged.
+
 ## 0.5.0 — 2026-10-23
 
 - Export explicit `watermark?: boolean` TTS wire controls, server availability and `TTSStreamGenerating` activation confirmation. Existing requests remain unmarked; no session or pricing API changes.

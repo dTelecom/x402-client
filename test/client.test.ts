@@ -923,3 +923,24 @@ describe("file transcription SDK", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 });
+
+describe("WAV jobs SDK",()=>{
+  beforeEach(()=>mockFetch.mockReset());
+  it("maps SSML controls without implicitly enabling watermark and streams signed downloads",async()=>{
+    const gateway=new DtelecomGateway({account:testAccount});
+    mockFetch.mockResolvedValueOnce(Response.json({id:"wav-id",status:"running",characters:5}));
+    const job=await gateway.createWav({text:"<speak>hello</speak>",voice:"M5",inputFormat:"ssml",idempotencyKey:"wav-key"});
+    expect(job.characters).toBe(5);
+    let [url,init]=mockFetch.mock.calls[0];expect(url).toContain("/v1/tts/jobs");
+    expect(JSON.parse(init!.body as string)).toEqual({text:"<speak>hello</speak>",voice:"M5",input_format:"ssml"});
+    expect((init!.headers as Record<string,string>)["Idempotency-Key"]).toBe("wav-key");
+    const response=new Response(new Uint8Array([82,73,70,70]),{headers:{"Content-Type":"audio/wav"}});
+    mockFetch.mockResolvedValueOnce(response);
+    const download=await gateway.downloadWav("wav-id");expect(download).toBe(response);expect(download.bodyUsed).toBe(false);
+    [url,init]=mockFetch.mock.calls[1];expect(url).toContain("/v1/tts/jobs/wav-id/audio");
+    expect((init!.headers as Record<string,string>).Authorization).toMatch(/^evm:/);
+    mockFetch.mockResolvedValueOnce(Response.json({error:"busy"},{status:429}));
+    await expect(gateway.createWav({text:"hello",idempotencyKey:"retry",watermark:true})).rejects.toBeInstanceOf(RateLimitError);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+});

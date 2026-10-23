@@ -18,6 +18,8 @@ import type {
   SolanaSigner,
   CreateFileTranscriptionRequest,
   FileTranscriptionJob,
+  CreateWavRequest,
+  WavJob,
   CreateVisionSnapshotRequest,
   VisionSnapshot,
   ModerationInference,
@@ -377,6 +379,29 @@ export class DtelecomGateway {
     return mapFileJob(await this.request("DELETE", `/v1/transcriptions/jobs/${encodeURIComponent(jobId)}`));
   }
 
+  /** Asynchronous 48 kHz mono PCM16 WAV. No automatic retry or credit purchase. */
+  async createWav(options: CreateWavRequest): Promise<WavJob> {
+    if (!/^[\x21-\x7e]{1,128}$/.test(options.idempotencyKey)) throw new Error("A valid idempotencyKey is required");
+    const { idempotencyKey, inputFormat, ...body } = options;
+    return mapWavJob(await this.request("POST", "/v1/tts/jobs", {
+      ...body, ...(inputFormat !== undefined ? { input_format: inputFormat } : {}),
+    }, { "Idempotency-Key": idempotencyKey }));
+  }
+
+  async getWav(jobId: string): Promise<WavJob> {
+    return mapWavJob(await this.request("GET", `/v1/tts/jobs/${encodeURIComponent(jobId)}`));
+  }
+
+  /** Stream the completed artifact through Response.body, or call Response.blob(). */
+  async downloadWav(jobId: string): Promise<Response> {
+    return this.authenticatedResponse("GET", `/v1/tts/jobs/${encodeURIComponent(jobId)}/audio`);
+  }
+
+  /** Cancel unfinished work or delete a completed artifact, preserving its charge. */
+  async deleteWav(jobId: string): Promise<WavJob> {
+    return mapWavJob(await this.request("DELETE", `/v1/tts/jobs/${encodeURIComponent(jobId)}`));
+  }
+
   /** Own-model snapshot analysis. No automatic retry or credit purchase. */
   async createVisionSnapshot(options: CreateVisionSnapshotRequest): Promise<VisionSnapshot> {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(options.idempotencyKey)) throw new Error("A valid idempotencyKey is required");
@@ -435,6 +460,11 @@ export class DtelecomGateway {
     body?: unknown,
     extraHeaders?: Record<string, string>,
   ): Promise<Raw> {
+    return (await (await this.authenticatedResponse(method, path, body, extraHeaders)).json()) as Raw;
+  }
+
+  private async authenticatedResponse(method: string, path: string, body?: unknown,
+    extraHeaders?: Record<string, string>): Promise<Response> {
     const headers = this.account
       ? await createAuthHeaders(this.account, method, path)
       : await createSolanaAuthHeaders(this.solanaAccount!, method, path);
@@ -450,7 +480,8 @@ export class DtelecomGateway {
     };
 
     const resp = await fetch(`${this.baseUrl}${path}`, init);
-    return this.handleResponse(resp, path);
+    if (!resp.ok) await this.handleResponse(resp, path);
+    return resp;
   }
 
   // --- Internal: x402 payment request (for buyCredits) ---
@@ -538,6 +569,10 @@ function mapSession(r: Raw): Session {
     settlementMethod: r.settlement_method,
     createdAt: r.created_at,
   };
+}
+
+function mapWavJob(r: Raw): WavJob {
+  return { id: r.id, status: r.status, characters: r.characters, result: r.result, error: r.error };
 }
 
 function mapFileJob(r: Raw): FileTranscriptionJob {

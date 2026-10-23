@@ -331,3 +331,46 @@ The configuration is AudioSeal B: 48 kHz streaming, alpha 0.25, approximately
 80 ms buffering plus 5 ms inference in the M6 lab. It runs after resampling and
 SSML gain and before PCM16. There is no post-watermark audio cleanup. Detection
 uses the matching 48 kHz profile; tiny/interrupted clips may not be detectable.
+
+## Batch WAV jobs (unreleased candidate)
+
+The methods below require a gateway with `TTS_WAV_ENABLED=true` and a deployed
+batch worker. This source addition does not enable production endpoints. Existing
+streaming TTS/translation methods are unchanged.
+
+```ts
+const job = await gateway.createWav({
+  idempotencyKey: crypto.randomUUID(),
+  text: '<speak>Hello!<break time="200ms"/>How are you?</speak>',
+  inputFormat: "ssml",
+  voice: "M5",
+  language: "en", // use "ru" with Russian text
+  speed: 1.1,
+  // watermark: true, // explicit opt-in, only on capable servers
+});
+
+const state = await gateway.getWav(job.id); // poll at an appropriate interval
+if (state.status === "completed") {
+  const response = await gateway.downloadWav(job.id);
+  const blob = await response.blob(); // or stream response.body directly to a file
+  // state.result has sample rate, sample count, byte length and SHA-256.
+}
+// await gateway.deleteWav(job.id); // cancel unfinished work or delete artifact
+```
+
+The result is a complete 48 kHz mono PCM16 WAV. Inputs support the same voice,
+language, speed and SSML/dictionary controls as streaming speech. Watermark stays
+off unless explicitly requested. The gateway limits text and expanded spoken text
+to 10,000 code points, JSON to 64 KiB and output to 30 minutes. Artifacts expire
+after 24 hours and only the owning wallet can download them.
+
+POST retries reuse the same key and identical input; changing input with an
+existing WAV key gives 409. A failed/busy job needs a new key for a new attempt.
+No method retries inference or buys credits automatically. Polling, downloads and
+deleting completed artifacts do not add charges; deletion does not refund completed
+work. Cancellation/failure before completion releases reserved credits.
+
+File transcription continues to use `createFileTranscription`,
+`getFileTranscription`, and `deleteFileTranscription`. Its batch implementation
+uses resident Whisper with optional diarization; it does not require a WebRTC room.
+New package publication and production activation are separate release steps.
