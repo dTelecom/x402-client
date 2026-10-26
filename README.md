@@ -186,17 +186,17 @@ try {
 
 | Service | Rate | Unit |
 |---------|------|------|
-| WebRTC | $0.001 | per audio participant minute |
+| WebRTC | $0.0001 | per audio participant minute |
 | Streaming STT | $0.004 | per connected STT session minute |
 | TTS | $0.006 | per 1K characters |
 | Translation | $5 | per 1M input Unicode code points |
-| File transcription + diarization | $0.003 | per decoded audio minute; 50 microcredits per started second |
+| File transcription + diarization | $0.002 | per decoded audio minute; ceil seconds × 2000/60 microcredits, rounded up once/file |
 | Text/SSML to WAV | $0.006 | per 1K expanded spoken Unicode code points |
-| Vision snapshot | $0.002 | per completed snapshot |
+| Vision snapshot | $0.001 | per completed snapshot |
 | Audio moderation | $0.004 | per submitted audio minute |
 | Image/frame moderation | $0.0005 | per completed frame |
 
-1 USD = 1,000,000 microcredits. Two audio participants + one live STT session + 500 spoken TTS characters/minute cost $0.009/minute, excluding the LLM. Smart Turn, partials, SSML and optional watermark do not add a price multiplier. Check [live pricing](https://x402.dtelecom.org/v1/pricing) for enabled services. The SDK buys USDC credits on Base/Solana; other gateway payment rails require their own integrations.
+1 USD = 1,000,000 microcredits. Two audio participants + one live STT session + 367 spoken TTS characters/minute cost approximately $0.0064/minute, excluding the LLM. Smart Turn, partials, SSML and optional watermark do not add a price multiplier. Check [live pricing](https://x402.dtelecom.org/v1/pricing) for enabled services. The SDK buys USDC credits on Base/Solana; other gateway payment rails require their own integrations.
 
 ## Text translation
 
