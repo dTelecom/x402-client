@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2 — 2026-10-27
+
+- Publish corrected gateway pricing and the 367-character voice-agent usage example in the npm README. Documentation-only release; runtime behavior is unchanged.
+
 ## 0.6.1 — 2026-10-23
 
 - Refresh all service guides, exact pricing, SSML/Smart Turn/watermark controls and batch retry/retention contracts.

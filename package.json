@@ -1,6 +1,6 @@
 {
   "name": "@dtelecom/x402-client",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "TypeScript SDK for dTelecom x402: WebRTC, speech, translation, file transcription, WAV, vision and moderation",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
