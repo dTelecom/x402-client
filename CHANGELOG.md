@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1 — 2026-11-25
+
+- Fix purchases with current `@x402/*` releases (2.x with client spend controls), which a fresh install resolves to: `buyCredits` now caps each payment at exactly the requested amount instead of the library's default $1, so purchases above $1 work again on Base and Solana. A quote above the requested amount is refused.
+- Fix the Incentiv rail with current `@x402/*` releases: its payment schemes declare Incentiv USDC as a known asset (`findDefaultAsset`).
+- Fix Solana wallet auth with real `@solana/kit` signers: `signMessages` returns signature bytes, which were treated as a base58 string (`value.split is not a function`). Base58 strings from custom signers are still accepted.
+- Widen the `@solana/kit` peer range to `>=5.1.0`, so `npm install @dtelecom/x402-client @x402/svm @solana/kit` resolves with current `@x402/svm` (which requires kit 8).
+- Tested against `@x402/*` 2.32.0 and `@solana/kit` 8.6.0.
+
 ## 0.7.0 — 2026-11-25
 
 - Add the optional `@dtelecom/x402-client/incentiv` module: buy credits with USDC on Incentiv Mainnet from a standard wallet (`incentiv-eoa-tx`) or an Incentiv smart account with gas in USDC or CENT (`incentiv-userop`). Uses only existing dependencies; not loaded unless imported. Client code ported from Incentiv's MIT-licensed reference implementation (see THIRD_PARTY_NOTICES.md).

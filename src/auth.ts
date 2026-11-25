@@ -35,7 +35,7 @@ export async function createAuthHeaders(
  * Create wallet-auth headers for the gateway (Solana).
  *
  * Signs: `${METHOD}\n${path}\n${timestamp}` as raw bytes (Ed25519).
- * Converts base58 signature → base64 for the gateway.
+ * Sends the signature base64-encoded (from kit's signature bytes, or a base58 string from custom signers).
  * Result: `Authorization: solana:<base64sig>`
  */
 export async function createSolanaAuthHeaders(
@@ -49,11 +49,17 @@ export async function createSolanaAuthHeaders(
   const messageBytes = new TextEncoder().encode(message);
 
   const [sigDict] = await signer.signMessages([{ content: messageBytes }]);
-  const base58Sig = sigDict[signer.address];
+  const signature = sigDict[signer.address];
+  if (signature === undefined) throw new Error("Solana signer returned no signature for its address");
 
-  // Encode base58 string → raw bytes → base64
-  const { getBase58Encoder } = await import("@solana/kit");
-  const sigBytes = getBase58Encoder().encode(base58Sig);
+  // @solana/kit signers return signature bytes; base58 strings are accepted for custom signers.
+  let sigBytes: Uint8Array;
+  if (typeof signature === "string") {
+    const { getBase58Encoder } = await import("@solana/kit");
+    sigBytes = Uint8Array.from(getBase58Encoder().encode(signature));
+  } else {
+    sigBytes = signature;
+  }
   const base64Sig = Buffer.from(sigBytes).toString("base64");
 
   return {

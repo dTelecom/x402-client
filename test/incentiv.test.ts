@@ -209,3 +209,47 @@ describe("incentivRail", () => {
     expect(await incentivPaymentAddress(account.address, { wallet: "smart-usdc" })).toBe(SMART);
   });
 });
+
+describe("spend cap (real @x402 client)", () => {
+  const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const baseChallenge = (amount: string) => ({
+    x402Version: 2, error: "Payment Required", resource: { url: `${GATEWAY}/v1/credits/purchase`, description: "", mimeType: "application/json" },
+    accepts: [{ scheme: "exact", network: "eip155:8453", amount, asset: BASE_USDC, payTo: PAY_TO, maxTimeoutSeconds: 300,
+      extra: { name: "USD Coin", version: "2" } }],
+  });
+  function serveBase(amount: string) {
+    const real = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url === `${GATEWAY}/v1/credits/purchase`) {
+        const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+        const sig = headers.get("PAYMENT-SIGNATURE");
+        if (!sig) {
+          const c = baseChallenge(amount);
+          return new Response(JSON.stringify(c), { status: 402, headers: { "PAYMENT-REQUIRED": Buffer.from(JSON.stringify(c)).toString("base64") } });
+        }
+        state.signatures.push(sig);
+        return Response.json({ account_id: "acct", credited_microcredits: amount, amount_usd: Number(amount) / 1e6 });
+      }
+      return real(input, init);
+    });
+  }
+
+  it("pays a Base purchase above $1 (x402 2.x caps payments at $1 by default)", async () => {
+    serveBase("5000000");
+    const r = await new DtelecomGateway({ gatewayUrl: GATEWAY, account }).buyCredits({ amountUsd: 5 });
+    expect(r.creditedMicrocredits).toBe("5000000");
+    expect(state.signatures).toHaveLength(1);
+  });
+
+  it("refuses a Base quote above the requested amount", async () => {
+    serveBase("6000000");
+    await expect(new DtelecomGateway({ gatewayUrl: GATEWAY, account }).buyCredits({ amountUsd: 5 })).rejects.toThrow(/spendControls|maxAmountPerPayment/);
+    expect(state.signatures).toEqual([]);
+  });
+
+  it("refuses an Incentiv quote above the requested amount", async () => {
+    await expect(gateway("eoa").buyCredits({ amountUsd: 0.5 })).rejects.toThrow(/spendControls|maxAmountPerPayment/);
+    expect(state.signatures).toEqual([]);
+  });
+});

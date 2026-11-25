@@ -1,6 +1,6 @@
 {
   "name": "@dtelecom/x402-client",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "TypeScript SDK for dTelecom x402: WebRTC, speech, translation, file transcription, WAV, vision and moderation",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -58,7 +58,7 @@
     "viem": "^2.0.0"
   },
   "peerDependencies": {
-    "@solana/kit": "^5.1.0",
+    "@solana/kit": ">=5.1.0",
     "@x402/svm": "^2.5.0"
   },
   "peerDependenciesMeta": {
@@ -70,9 +70,9 @@
     }
   },
   "devDependencies": {
-    "@solana/kit": "^5.5.1",
+    "@solana/kit": "^8.6.0",
     "@types/node": "^22.0.0",
-    "@x402/svm": "^2.5.0",
+    "@x402/svm": "^2.32.0",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

@@ -5,10 +5,20 @@ import { getAddress, isAddressEqual, toHex, type Address, type Hex, type Transac
 import type { PaymentRequirements, SchemeNetworkClient } from "@x402/fetch";
 import {
   DEFAULT_MAX_GAS_FEE, DEFAULT_MAX_NATIVE_GAS_COST, INCENTIV_EOA_SCHEME, INCENTIV_NETWORK, INCENTIV_USEROP_SCHEME,
-  MAX_EOA_GAS, type IncentivConfig,
+  MAX_EOA_GAS, USDC_DECIMALS, type IncentivConfig,
 } from "./constants.js";
 import { checkPaysRequirements, deadlineMarker, decodeEoaPayment, decodePaymentOp, IncentivPaymentError } from "./decode.js";
 import { makeChain, opToWire, preparePayment, requiredPrefund, smartAccountAddress, transferCall, type Chain } from "./userop.js";
+
+/**
+ * Lets x402 client spend controls (newer @x402/core) recognise Incentiv USDC as a known asset,
+ * so its USD cap applies instead of the asset being refused.
+ */
+function findUsdc(cfg: IncentivConfig, asset: string, network: string) {
+  return network === INCENTIV_NETWORK && asset.toLowerCase() === cfg.usdc.toLowerCase()
+    ? { asset: cfg.usdc, decimals: USDC_DECIMALS, symbol: "USDC" }
+    : undefined;
+}
 
 function checkCommon(x402Version: number, requirements: PaymentRequirements, scheme: string, cfg: IncentivConfig): number {
   if (x402Version !== 2) throw new Error(`${scheme} needs x402 v2, got v${x402Version}`);
@@ -31,6 +41,10 @@ export interface IncentivEoaSigner {
 export class IncentivEoaTxClientScheme implements SchemeNetworkClient {
   readonly scheme = INCENTIV_EOA_SCHEME;
   private readonly chain: Chain;
+
+  findDefaultAsset(asset: string, network: string) {
+    return findUsdc(this.cfg, asset, network);
+  }
 
   constructor(private readonly signer: IncentivEoaSigner, private readonly cfg: IncentivConfig) {
     this.chain = makeChain(cfg);
@@ -106,6 +120,10 @@ function randomPaymentId(): Hex {
 export class IncentivUserOpClientScheme implements SchemeNetworkClient {
   readonly scheme = INCENTIV_USEROP_SCHEME;
   private readonly chain: Chain;
+
+  findDefaultAsset(asset: string, network: string) {
+    return findUsdc(this.cfg, asset, network);
+  }
 
   constructor(
     private readonly owner: IncentivOwnerSigner,

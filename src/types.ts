@@ -4,7 +4,7 @@ export interface SolanaSigner {
   readonly address: string;
   signMessages(
     messages: readonly { content: Uint8Array }[],
-  ): Promise<readonly Record<string, string>[]>;
+  ): Promise<readonly Record<string, Uint8Array | string>[]>;
 }
 
 // === Request types (camelCase — SDK convention) ===

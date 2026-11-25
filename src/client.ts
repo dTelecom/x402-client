@@ -71,6 +71,18 @@ const RAIL_PENDING_LIMIT_MS = 10 * 60_000;
 const RAIL_RETRY_CAP_MS = 60_000;
 const RAIL_BUSY_RETRY_MS = 5_000;
 
+/**
+ * @x402 2.x clients from the version that added spend controls default to a $1 cap per payment.
+ * A purchase pays exactly the amount the caller asked for (in cents, as the gateway rounds it),
+ * so that is the cap. Older clients without spend controls are unaffected.
+ */
+function capSpend(client: x402Client, amountUsd: number): void {
+  const controls = client as unknown as { setSpendControls?: (c: { maxAmountPerPayment: string }) => unknown };
+  if (Number.isFinite(amountUsd) && amountUsd > 0) {
+    controls.setSpendControls?.({ maxAmountPerPayment: `$${amountUsd.toFixed(2)}` });
+  }
+}
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export interface DtelecomGatewayConfig {
@@ -93,54 +105,54 @@ export class DtelecomGateway {
   private readonly solanaAccount?: SolanaSigner;
   private readonly walletChain: "evm" | "solana";
   private readonly walletAddress: string;
-  private readonly fetchWithPayment: typeof fetch;
-  private readonly svmReady: Promise<void>;
-  private readonly rail?: { path: string; client: x402Client };
+  /** Registers the purchase rail's x402 schemes on a fresh client (one client per purchase). */
+  private readonly registerSchemes: (client: x402Client) => Promise<void>;
+  private readonly purchasePath: string;
 
   constructor(config: DtelecomGatewayConfig) {
     if (!config.account && !config.solanaAccount) {
       throw new Error("Either account (EVM) or solanaAccount (Solana) must be provided");
     }
-    if (config.paymentRail) {
-      if (!config.account) throw new Error("paymentRail requires an EVM account");
-      const client = new x402Client();
-      config.paymentRail.register(client, config.account);
-      this.rail = { path: config.paymentRail.purchasePath, client };
-    }
+    if (config.paymentRail && !config.account) throw new Error("paymentRail requires an EVM account");
 
     this.baseUrl = (config.gatewayUrl ?? "https://x402.dtelecom.org").replace(/\/+$/, "");
     this.account = config.account;
     this.solanaAccount = config.solanaAccount;
 
-    const x402 = new x402Client();
-
-    if (config.account) {
+    if (config.paymentRail) {
+      const rail = config.paymentRail;
+      const account = config.account!;
+      this.walletChain = "evm";
+      this.walletAddress = account.address;
+      this.purchasePath = rail.purchasePath;
+      this.registerSchemes = async (client) => { rail.register(client, account); };
+    } else if (config.account) {
       this.walletChain = "evm";
       this.walletAddress = config.account.address;
+      this.purchasePath = "/v1/credits/purchase";
 
-      // Set up x402 payment client for EVM (Base mainnet)
+      // x402 payments for EVM (Base mainnet)
       const publicClient = createPublicClient({ chain: base, transport: http() });
       const signer = toClientEvmSigner(config.account, publicClient);
-      registerExactEvmScheme(x402, { signer });
-      this.svmReady = Promise.resolve();
+      this.registerSchemes = async (client) => { registerExactEvmScheme(client, { signer }); };
     } else {
       this.walletChain = "solana";
       this.walletAddress = config.solanaAccount!.address;
+      this.purchasePath = "/v1/credits/purchase";
 
       // Dynamically load @x402/svm for Solana payment scheme
+      const svm = import("@x402/svm/exact/client").catch(() => {
+        throw new Error(
+          "@x402/svm is required for Solana support. Install it: npm install @x402/svm @solana/kit",
+        );
+      });
+      svm.catch(() => {}); // reported when a purchase needs it
       // Cast: at runtime solanaAccount is a KeyPairSigner which satisfies TransactionSigner
-      this.svmReady = import("@x402/svm/exact/client")
-        .then(({ registerExactSvmScheme }) => {
-          registerExactSvmScheme(x402, { signer: config.solanaAccount as never });
-        })
-        .catch(() => {
-          throw new Error(
-            "@x402/svm is required for Solana support. Install it: npm install @x402/svm @solana/kit",
-          );
-        });
+      this.registerSchemes = async (client) => {
+        const { registerExactSvmScheme } = await svm;
+        registerExactSvmScheme(client, { signer: config.solanaAccount as never });
+      };
     }
-
-    this.fetchWithPayment = wrapFetchWithPayment(fetch, x402);
   }
 
   // --- Credits ---
@@ -151,13 +163,12 @@ export class DtelecomGateway {
       wallet_chain: this.walletChain,
       amount_usd: options.amountUsd,
     };
-    let r: Raw;
-    if (this.rail) {
-      r = await this.purchaseWithRail(this.rail, body);
-    } else {
-      await this.svmReady;
-      r = await this.requestWithPayment("/v1/credits/purchase", body);
-    }
+    const client = new x402Client();
+    await this.registerSchemes(client);
+    capSpend(client, options.amountUsd);
+    const r = this.purchasePath === "/v1/credits/purchase"
+      ? await this.requestWithPayment(this.purchasePath, client, body)
+      : await this.purchaseWithRail(this.purchasePath, client, body);
     return {
       accountId: r.account_id,
       creditedMicrocredits: r.credited_microcredits,
@@ -522,10 +533,10 @@ export class DtelecomGateway {
 
   // --- Internal: x402 payment request (for buyCredits) ---
 
-  private async requestWithPayment(path: string, body: unknown): Promise<Raw> {
+  private async requestWithPayment(path: string, client: x402Client, body: unknown): Promise<Raw> {
     let resp: Response;
     try {
-      resp = await this.fetchWithPayment(`${this.baseUrl}${path}`, {
+      resp = await wrapFetchWithPayment(fetch, client)(`${this.baseUrl}${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -545,21 +556,21 @@ export class DtelecomGateway {
    * Sign one payment, then resend that same payment while the gateway reports settlement pending
    * (503 with Retry-After) or busy (409). Never signs a second payment for one purchase.
    */
-  private async purchaseWithRail(rail: { path: string; client: x402Client }, body: unknown): Promise<Raw> {
-    const url = `${this.baseUrl}${rail.path}`;
+  private async purchaseWithRail(path: string, client: x402Client, body: unknown): Promise<Raw> {
+    const url = `${this.baseUrl}${path}`;
     const post = (headers: Record<string, string>) =>
       fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
 
     const challenge = await post({});
-    if (challenge.status !== 402) return this.handleResponse(challenge, rail.path);
-    const http402 = new x402HTTPClient(rail.client);
+    if (challenge.status !== 402) return this.handleResponse(challenge, path);
+    const http402 = new x402HTTPClient(client);
     let signature: Record<string, string>;
     try {
       const required = http402.getPaymentRequiredResponse(
         (name) => challenge.headers.get(name),
         await challenge.json().catch(() => undefined),
       );
-      signature = http402.encodePaymentSignatureHeader(await rail.client.createPaymentPayload(required));
+      signature = http402.encodePaymentSignatureHeader(await client.createPaymentPayload(required));
     } catch (err) {
       throw new PaymentError(`Payment failed: ${err instanceof Error ? err.message : String(err)}`);
     }
