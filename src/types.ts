@@ -78,6 +78,8 @@ export interface BuyCreditsResponse {
   accountId: string;
   creditedMicrocredits: string;
   amountUsd: number;
+  /** On-chain settlement transaction, when the payment rail reports it (Incentiv). */
+  transaction?: string;
 }
 
 export interface AccountResponse {

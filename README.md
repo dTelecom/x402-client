@@ -2,7 +2,7 @@
 
 TypeScript SDK for the [dTelecom x402 gateway](https://x402.dtelecom.org) — buy credits with USDC and use WebRTC, streaming speech, translation, file transcription with diarization, text/SSML-to-WAV, vision and audio/image moderation.
 
-Uses the [x402 HTTP payment protocol](https://www.x402.org/) for on-chain micropayments on Base and Solana.
+Uses the [x402 HTTP payment protocol](https://www.x402.org/) for on-chain micropayments on Base and Solana, and optionally on [Incentiv](#incentiv-optional).
 
 ## Install
 
@@ -98,6 +98,30 @@ import { createKeyPairSignerFromBytes } from '@solana/kit';
 const signer = await createKeyPairSignerFromBytes(secretKeyBytes);
 ```
 
+### Incentiv (optional)
+
+Buy credits with USDC on Incentiv Mainnet through the optional `@dtelecom/x402-client/incentiv` module. It uses only `viem` and `@x402/fetch` (already required for EVM), so there is nothing extra to install; it is not loaded unless you import it.
+
+```typescript
+import { DtelecomGateway } from '@dtelecom/x402-client';
+import { incentivRail, incentivPaymentAddress } from '@dtelecom/x402-client/incentiv';
+import { privateKeyToAccount } from 'viem/accounts';
+
+const account = privateKeyToAccount(process.env.WALLET_PRIVATE_KEY as `0x${string}`);
+console.log('Fund on Incentiv:', await incentivPaymentAddress(account.address, { wallet: 'eoa' }));
+
+const gateway = new DtelecomGateway({ account, paymentRail: incentivRail({ wallet: 'eoa' }) });
+const purchase = await gateway.buyCredits({ amountUsd: 1 }); // purchase.transaction = Incentiv tx hash
+```
+
+| `wallet` | Who pays | Gas | Fund on Incentiv |
+|----------|----------|-----|------------------|
+| `"eoa"` (default) | The key's standard wallet | CENT, paid by the wallet | USDC + a little CENT |
+| `"smart-usdc"` | The key's Incentiv smart account (deployed by its first payment) | USDC to the paymaster, capped by `maxGasFee` (default 0.25 USDC) | USDC |
+| `"smart-cent"` | The same smart account | CENT, capped by `maxNativeGasCost` (default 100 CENT) | USDC + CENT |
+
+Credits go to the key's own address (`wallet_chain: evm`), so one key has one balance across Base, Tempo and Incentiv, and spends it with the usual EVM wallet auth. Each purchase signs exactly one payment: while the gateway reports settlement pending, `buyCredits` resends that same payment (up to 10 minutes) and never signs a second one. A standard wallet can make one payment at a time; earlier Incentiv transactions must be mined first. See [examples/incentiv-purchase](examples/incentiv-purchase).
+
 ## API
 
 ### Constructor
@@ -110,13 +134,13 @@ new DtelecomGateway({ account: LocalAccount, gatewayUrl?: string })
 new DtelecomGateway({ solanaAccount: SolanaSigner, gatewayUrl?: string })
 ```
 
-Exactly one of `account` or `solanaAccount` must be provided. `gatewayUrl` defaults to `https://x402.dtelecom.org`.
+Exactly one of `account` or `solanaAccount` must be provided. `gatewayUrl` defaults to `https://x402.dtelecom.org`. Optional `paymentRail` (EVM `account` only) buys credits through another rail, e.g. `incentivRail()`.
 
 ### Credits
 
 | Method | Description |
 |--------|-------------|
-| `buyCredits({ amountUsd })` | Purchase credits via x402 USDC payment (Base or Solana) |
+| `buyCredits({ amountUsd })` | Purchase credits via x402 USDC payment (Base or Solana, or the configured `paymentRail`) |
 
 ### Account
 

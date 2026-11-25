@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0 — 2026-11-25
+
+- Add the optional `@dtelecom/x402-client/incentiv` module: buy credits with USDC on Incentiv Mainnet from a standard wallet (`incentiv-eoa-tx`) or an Incentiv smart account with gas in USDC or CENT (`incentiv-userop`). Uses only existing dependencies; not loaded unless imported. Client code ported from Incentiv's MIT-licensed reference implementation (see THIRD_PARTY_NOTICES.md).
+- Add `paymentRail` to `DtelecomGatewayConfig`. A rail purchase signs one payment and resends that same payment while the gateway reports settlement pending.
+- `BuyCreditsResponse.transaction` carries the on-chain settlement transaction when the rail reports it.
+
 ## 0.6.2 — 2026-10-27
 
 - Publish corrected gateway pricing and the 367-character voice-agent usage example in the npm README. Documentation-only release; runtime behavior is unchanged.

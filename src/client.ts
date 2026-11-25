@@ -1,7 +1,7 @@
 import type { LocalAccount } from "viem/accounts";
 import { createPublicClient, http } from "viem";
 import { base } from "viem/chains";
-import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
+import { x402Client, x402HTTPClient, wrapFetchWithPayment } from "@x402/fetch";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
 import { toClientEvmSigner } from "@x402/evm";
 
@@ -56,6 +56,23 @@ import type {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Raw = Record<string, any>;
 
+/**
+ * An alternative credit-purchase rail, such as `incentivRail()` from `@dtelecom/x402-client/incentiv`.
+ * The rail registers its x402 schemes; payments are signed by the gateway's EVM `account`.
+ */
+export interface PaymentRail {
+  /** Gateway purchase route, e.g. "/v1/credits/purchase/incentiv". */
+  readonly purchasePath: string;
+  register(client: x402Client, account: LocalAccount): void;
+}
+
+/** How long buyCredits keeps resending one signed payment while the gateway reports settlement pending. */
+const RAIL_PENDING_LIMIT_MS = 10 * 60_000;
+const RAIL_RETRY_CAP_MS = 60_000;
+const RAIL_BUSY_RETRY_MS = 5_000;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 export interface DtelecomGatewayConfig {
   /** Gateway base URL (default: "https://x402.dtelecom.org") */
   gatewayUrl?: string;
@@ -63,6 +80,11 @@ export interface DtelecomGatewayConfig {
   account?: LocalAccount;
   /** Solana signer — structurally compatible with @solana/kit KeyPairSigner */
   solanaAccount?: SolanaSigner;
+  /**
+   * Buy credits through another rail instead of x402 on Base/Solana, e.g.
+   * `incentivRail({ wallet: "eoa" })` from `@dtelecom/x402-client/incentiv`. Requires `account`.
+   */
+  paymentRail?: PaymentRail;
 }
 
 export class DtelecomGateway {
@@ -73,10 +95,17 @@ export class DtelecomGateway {
   private readonly walletAddress: string;
   private readonly fetchWithPayment: typeof fetch;
   private readonly svmReady: Promise<void>;
+  private readonly rail?: { path: string; client: x402Client };
 
   constructor(config: DtelecomGatewayConfig) {
     if (!config.account && !config.solanaAccount) {
       throw new Error("Either account (EVM) or solanaAccount (Solana) must be provided");
+    }
+    if (config.paymentRail) {
+      if (!config.account) throw new Error("paymentRail requires an EVM account");
+      const client = new x402Client();
+      config.paymentRail.register(client, config.account);
+      this.rail = { path: config.paymentRail.purchasePath, client };
     }
 
     this.baseUrl = (config.gatewayUrl ?? "https://x402.dtelecom.org").replace(/\/+$/, "");
@@ -117,16 +146,23 @@ export class DtelecomGateway {
   // --- Credits ---
 
   async buyCredits(options: BuyCreditsRequest): Promise<BuyCreditsResponse> {
-    await this.svmReady;
-    const r = await this.requestWithPayment("/v1/credits/purchase", {
+    const body = {
       wallet_address: this.walletAddress,
       wallet_chain: this.walletChain,
       amount_usd: options.amountUsd,
-    });
+    };
+    let r: Raw;
+    if (this.rail) {
+      r = await this.purchaseWithRail(this.rail, body);
+    } else {
+      await this.svmReady;
+      r = await this.requestWithPayment("/v1/credits/purchase", body);
+    }
     return {
       accountId: r.account_id,
       creditedMicrocredits: r.credited_microcredits,
       amountUsd: r.amount_usd,
+      ...(r.incentiv_tx_hash !== undefined ? { transaction: r.incentiv_tx_hash } : {}),
     };
   }
 
@@ -501,6 +537,57 @@ export class DtelecomGateway {
     }
 
     return this.handleResponse(resp, path);
+  }
+
+  // --- Internal: purchase through a payment rail ---
+
+  /**
+   * Sign one payment, then resend that same payment while the gateway reports settlement pending
+   * (503 with Retry-After) or busy (409). Never signs a second payment for one purchase.
+   */
+  private async purchaseWithRail(rail: { path: string; client: x402Client }, body: unknown): Promise<Raw> {
+    const url = `${this.baseUrl}${rail.path}`;
+    const post = (headers: Record<string, string>) =>
+      fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
+
+    const challenge = await post({});
+    if (challenge.status !== 402) return this.handleResponse(challenge, rail.path);
+    const http402 = new x402HTTPClient(rail.client);
+    let signature: Record<string, string>;
+    try {
+      const required = http402.getPaymentRequiredResponse(
+        (name) => challenge.headers.get(name),
+        await challenge.json().catch(() => undefined),
+      );
+      signature = http402.encodePaymentSignatureHeader(await rail.client.createPaymentPayload(required));
+    } catch (err) {
+      throw new PaymentError(`Payment failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    const deadline = Date.now() + RAIL_PENDING_LIMIT_MS;
+    for (;;) {
+      const resp = await post(signature);
+      // Retry-After marks a payment the gateway is still settling (503) or processing (409).
+      const retryAfter = resp.headers.get("Retry-After");
+      const pending = (resp.status === 503 || resp.status === 409) && retryAfter !== null;
+      if (pending && Date.now() < deadline) {
+        await resp.body?.cancel();
+        const seconds = Number(retryAfter);
+        await sleep(Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1000, RAIL_RETRY_CAP_MS) : RAIL_BUSY_RETRY_MS);
+        continue;
+      }
+      if (resp.ok) return (await resp.json()) as Raw;
+      const text = await resp.text().catch(() => "");
+      let detail: { error?: string; errorReason?: string; payment_id?: string } = {};
+      try { detail = JSON.parse(text); } catch { /* not JSON */ }
+      const message = detail.error ?? (text || resp.statusText);
+      if (pending) {
+        throw new PaymentError(`Settlement is still pending (payment_id ${detail.payment_id ?? "unknown"}); the gateway completes it and credits your account. Do not pay again.`);
+      }
+      if (resp.status === 402) throw new PaymentError(`Payment rejected: ${detail.errorReason ?? message}`);
+      if (resp.status === 503) throw new PaymentError(`${message}${detail.payment_id ? ` (payment_id ${detail.payment_id})` : ""}`);
+      throw new GatewayError(message, resp.status);
+    }
   }
 
   // --- Internal: response handling ---

@@ -1,6 +1,6 @@
 {
   "name": "@dtelecom/x402-client",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "TypeScript SDK for dTelecom x402: WebRTC, speech, translation, file transcription, WAV, vision and moderation",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -15,11 +15,22 @@
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
       }
+    },
+    "./incentiv": {
+      "import": {
+        "types": "./dist/incentiv.d.mts",
+        "default": "./dist/incentiv.mjs"
+      },
+      "require": {
+        "types": "./dist/incentiv.d.ts",
+        "default": "./dist/incentiv.js"
+      }
     }
   },
   "files": [
     "dist",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
     "build": "tsup",
