@@ -1,0 +1,45 @@
+name: SDK checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Import the published entry points from a clean consumer
+        run: |
+          consumer=$(mktemp -d)
+          archive=$(npm pack --silent --pack-destination "$consumer")
+          cd "$consumer"
+          echo '{"private":true}' > package.json
+          npm install --no-audit --no-fund "./$archive"
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { createRequire } from 'node:module';
+          const require = createRequire(import.meta.url);
+          for (const [entry, exported] of [
+            ['@dtelecom/x402-client', 'DtelecomGateway'],
+            ['@dtelecom/x402-client/incentiv', 'incentivRail'],
+          ]) {
+            assert.equal(typeof (await import(entry))[exported], 'function');
+            assert.equal(typeof require(entry)[exported], 'function');
+          }
+          JS

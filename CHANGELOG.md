@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.2 — 2026-11-28
+
+- Update the quickstarts to keep session credentials on the backend and load the Solana signer from a funded wallet.
+
 ## 0.7.1 — 2026-11-25
 
 - Fix purchases with current `@x402/*` releases (2.x with client spend controls), which a fresh install resolves to: `buyCredits` now caps each payment at exactly the requested amount instead of the library's default $1, so purchases above $1 work again on Base and Solana. A quote above the requested amount is refused.

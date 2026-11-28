@@ -2,6 +2,8 @@
 
 TypeScript SDK for the [dTelecom x402 gateway](https://x402.dtelecom.org) — buy credits with USDC and use WebRTC, streaming speech, translation, file transcription with diarization, text/SSML-to-WAV, vision and audio/image moderation.
 
+[![Gateway client checks](https://github.com/dTelecom/x402-client/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/dTelecom/x402-client/actions/workflows/check.yml)
+
 Uses the [x402 HTTP payment protocol](https://www.x402.org/) for on-chain micropayments on Base and Solana, and optionally on [Incentiv](#incentiv-optional).
 
 ## Install
@@ -19,6 +21,8 @@ npm install @dtelecom/x402-client @x402/fetch @x402/svm @solana/kit
 ```
 
 ## Quick Start (EVM)
+
+Set `WALLET_PRIVATE_KEY` on your backend for a wallet funded with USDC on Base.
 
 ```typescript
 import { DtelecomGateway } from '@dtelecom/x402-client';
@@ -42,20 +46,24 @@ const session = await gateway.createAgentSession({
   language: 'en',
 });
 
-console.log(session.webrtc.agent.token);   // JWT for agent's WebRTC connection
-console.log(session.webrtc.client.token);  // JWT for client's WebRTC connection
-console.log(session.stt.token);            // Token for STT server
-console.log(session.tts.token);            // Token for TTS server
+console.log('Session expires at', session.expiresAt);
 ```
+
+Keep the agent room grant and the STT and TTS credentials on the backend. Return `session.webrtc.client.wsUrl` and `session.webrtc.client.token` only to the authorized participant.
 
 ## Quick Start (Solana)
 
+Set `SOLANA_KEYPAIR_PATH` to the Solana CLI keypair file for your USDC-funded wallet on Solana mainnet. Run this example on your backend.
+
 ```typescript
 import { DtelecomGateway } from '@dtelecom/x402-client';
-import { generateKeyPairSigner } from '@solana/kit';
+import { readFile } from 'node:fs/promises';
+import { createKeyPairSignerFromBytes } from '@solana/kit';
 
-const signer = await generateKeyPairSigner();
-// Or load from file: import { createKeyPairSignerFromBytes } from '@solana/kit';
+const keypairPath = process.env.SOLANA_KEYPAIR_PATH;
+if (!keypairPath) throw new Error('Set SOLANA_KEYPAIR_PATH to your wallet file.');
+const bytes = Uint8Array.from(JSON.parse(await readFile(keypairPath, 'utf8')));
+const signer = await createKeyPairSignerFromBytes(bytes);
 
 const gateway = new DtelecomGateway({
   solanaAccount: signer,
